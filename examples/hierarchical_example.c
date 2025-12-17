@@ -86,7 +86,7 @@ mode1_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case EVT_MODE_CHANGE:
             printf("[MODE1] Mode change to MODE2\n");
-            hsm_transition(hsm, &state_mode2);
+            hsm_transition(hsm, &state_mode2, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
@@ -115,7 +115,7 @@ mode2_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case EVT_MODE_CHANGE:
             printf("[MODE2] Mode change to MODE1\n");
-            hsm_transition(hsm, &state_mode1);
+            hsm_transition(hsm, &state_mode1, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
@@ -144,7 +144,7 @@ standby_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case EVT_BUTTON_PRESS:
             printf("[STANDBY] Button pressed - waking up to MODE1\n");
-            hsm_transition(hsm, &state_mode1);
+            hsm_transition(hsm, &state_mode1, NULL, NULL);
             return HSM_EVENT_NONE;
 
         default:
@@ -184,7 +184,7 @@ app_main(void) {
     hsm_state_create(&state_standby, "STANDBY", standby_handler, &state_system);
 
     /* Initialize HSM with MODE1 as initial state */
-    hsm_init(&my_hsm, "HierarchicalHSM", &state_mode1);
+    hsm_init(&my_hsm, "HierarchicalHSM", &state_mode1, NULL);
 
     printf("\n=== Testing State Hierarchy ===\n\n");
 

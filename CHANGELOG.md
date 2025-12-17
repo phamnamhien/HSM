@@ -57,7 +57,4 @@ All notable changes to this project will be documented in this file.
 - Detailed inline code documentation
 
 ## Author
-Pham Nam Hien (phamnamhien) - Embedded Systems Engineer
-
-## License
-MIT License - Based on Howard Chan's HSM library (https://github.com/howard-chan/HSM)
+Pham Nam Hien (phamnamhien)

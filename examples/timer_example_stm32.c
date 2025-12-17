@@ -1,13 +1,13 @@
 /**
  * \file            timer_example_stm32.c
- * \brief           HSM timer example for STM32 HAL
+ * \brief           Multiple timer example for STM32 HAL
  */
 
 #include "hsm.h"
 #include "main.h"
 #include <stdio.h>
 
-/* Timer structure for STM32 */
+/* Platform timer for STM32 */
 typedef struct {
     TIM_HandleTypeDef* htim;
     void (*callback)(void*);
@@ -17,21 +17,19 @@ typedef struct {
     uint8_t active;
 } stm32_timer_t;
 
-static stm32_timer_t hsm_timer;
-extern TIM_HandleTypeDef htim6; /* Use TIM6 for HSM timer */
+static stm32_timer_t hsm_timers[HSM_CFG_MAX_TIMERS];
+extern TIM_HandleTypeDef htim3;
 
-/**
- * \brief           Timer interrupt callback (called from HAL_TIM_PeriodElapsedCallback)
- */
 void
 hsm_timer_irq_handler(void) {
-    if (hsm_timer.active && hsm_timer.callback != NULL) {
-        hsm_timer.callback(hsm_timer.arg);
-
-        /* Stop if one-shot timer */
-        if (!hsm_timer.repeat) {
-            HAL_TIM_Base_Stop_IT(hsm_timer.htim);
-            hsm_timer.active = 0;
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        if (hsm_timers[i].active && hsm_timers[i].callback != NULL) {
+            hsm_timers[i].callback(hsm_timers[i].arg);
+            
+            if (!hsm_timers[i].repeat) {
+                HAL_TIM_Base_Stop_IT(hsm_timers[i].htim);
+                hsm_timers[i].active = 0;
+            }
         }
     }
 }
@@ -42,37 +40,31 @@ stm32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_
         return NULL;
     }
 
-    /* Stop existing timer */
-    if (hsm_timer.active) {
-        HAL_TIM_Base_Stop_IT(hsm_timer.htim);
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        if (!hsm_timers[i].active) {
+            hsm_timers[i].htim = &htim3;
+            hsm_timers[i].callback = callback;
+            hsm_timers[i].arg = arg;
+            hsm_timers[i].period_ms = period_ms;
+            hsm_timers[i].repeat = repeat;
+            hsm_timers[i].active = 1;
+
+            __HAL_TIM_SET_AUTORELOAD(hsm_timers[i].htim, period_ms - 1);
+            __HAL_TIM_SET_COUNTER(hsm_timers[i].htim, 0);
+            HAL_TIM_Base_Start_IT(hsm_timers[i].htim);
+
+            return &hsm_timers[i];
+        }
     }
-
-    /* Setup timer */
-    hsm_timer.htim = &htim6;
-    hsm_timer.callback = callback;
-    hsm_timer.arg = arg;
-    hsm_timer.period_ms = period_ms;
-    hsm_timer.repeat = repeat;
-    hsm_timer.active = 1;
-
-    /* Configure timer period
-     * Assuming TIM6 is configured with 1ms tick
-     * Adjust __HAL_TIM_SET_AUTORELOAD based on your clock config
-     */
-    __HAL_TIM_SET_AUTORELOAD(hsm_timer.htim, period_ms - 1);
-    __HAL_TIM_SET_COUNTER(hsm_timer.htim, 0);
-
-    /* Start timer */
-    HAL_TIM_Base_Start_IT(hsm_timer.htim);
-
-    return &hsm_timer;
+    return NULL;
 }
 
 static void
 stm32_timer_stop(void* timer_handle) {
-    if (timer_handle == &hsm_timer && hsm_timer.active) {
-        HAL_TIM_Base_Stop_IT(hsm_timer.htim);
-        hsm_timer.active = 0;
+    stm32_timer_t* timer = (stm32_timer_t*)timer_handle;
+    if (timer != NULL && timer->active) {
+        HAL_TIM_Base_Stop_IT(timer->htim);
+        timer->active = 0;
     }
 }
 
@@ -81,26 +73,26 @@ stm32_timer_get_ms(void) {
     return HAL_GetTick();
 }
 
-static const hsm_timer_if_t stm32_timer_if = {.start = stm32_timer_start,
-                                               .stop = stm32_timer_stop,
-                                               .get_ms = stm32_timer_get_ms};
+static const hsm_timer_if_t stm32_timer_if = {
+    .start = stm32_timer_start,
+    .stop = stm32_timer_stop,
+    .get_ms = stm32_timer_get_ms
+};
 
-/* HAL Timer Callback - Add this to stm32xxxx_it.c or main.c */
-void
-HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
-    if (htim->Instance == TIM6) {
-        hsm_timer_irq_handler();
-    }
-}
-
-/* HSM states */
+/* States */
 static hsm_state_t state_idle;
 static hsm_state_t state_running;
+
+/* Timers */
+static hsm_timer_t *timer_led;
+static hsm_timer_t *timer_watchdog;
 
 /* Events */
 typedef enum {
     EVT_START = HSM_EVENT_USER,
     EVT_STOP,
+    EVT_LED_TOGGLE,
+    EVT_WATCHDOG,
 } app_events_t;
 
 static hsm_event_t
@@ -109,10 +101,6 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
         case HSM_EVENT_ENTRY:
             printf("[IDLE] Entry\n");
             HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
-            break;
-
-        case HSM_EVENT_EXIT:
-            printf("[IDLE] Exit\n");
             break;
 
         case EVT_START:
@@ -129,21 +117,37 @@ running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[RUNNING] Entry - Start 500ms repeating timer\n");
+            printf("[RUNNING] Entry\n");
             toggle = 0;
-            /* Start repeating timer */
-            hsm_timer_start(hsm, 500, 1);
+            
+            /* LED toggle timer */
+            hsm_timer_create(&timer_led, hsm, EVT_LED_TOGGLE, 
+                           500, HSM_TIMER_PERIODIC);
+            hsm_timer_start(timer_led);
+            
+            /* Watchdog timer */
+            hsm_timer_create(&timer_watchdog, hsm, EVT_WATCHDOG,
+                           10000, HSM_TIMER_ONE_SHOT);
+            hsm_timer_start(timer_watchdog);
             break;
 
         case HSM_EVENT_EXIT:
             printf("[RUNNING] Exit\n");
+            hsm_timer_delete(timer_led);
+            hsm_timer_delete(timer_watchdog);
             break;
 
-        case HSM_EVENT_TIMEOUT:
+        case EVT_LED_TOGGLE:
             toggle = !toggle;
-            HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, toggle ? GPIO_PIN_SET : GPIO_PIN_RESET);
-            printf("[RUNNING] Timeout - LED %s\n", toggle ? "ON" : "OFF");
+            HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, 
+                            toggle ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            printf("[RUNNING] LED %s\n", toggle ? "ON" : "OFF");
             break;
+
+        case EVT_WATCHDOG:
+            printf("[RUNNING] Watchdog timeout!\n");
+            hsm_transition(hsm, &state_idle, NULL, NULL);
+            return HSM_EVENT_NONE;
 
         case EVT_STOP:
             printf("[RUNNING] Stop\n");
@@ -153,6 +157,13 @@ running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     return event;
 }
 
+void
+HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM3) {
+        hsm_timer_irq_handler();
+    }
+}
+
 int
 main(void) {
     hsm_t my_hsm;
@@ -160,24 +171,19 @@ main(void) {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
-    MX_TIM6_Init();
+    MX_TIM3_Init();
 
-    printf("=== HSM Timer Example for STM32 ===\n");
+    printf("=== Multiple Timer HSM Example for STM32 ===\n");
 
-    /* Create states */
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
     hsm_state_create(&state_running, "RUNNING", running_handler, NULL);
 
-    /* Initialize HSM with STM32 timer interface */
     hsm_init(&my_hsm, "STM32_HSM", &state_idle, &stm32_timer_if);
 
-    /* Test sequence */
     HAL_Delay(1000);
     hsm_dispatch(&my_hsm, EVT_START, NULL);
 
-    HAL_Delay(5000);
-    hsm_dispatch(&my_hsm, EVT_STOP, NULL);
-
     while (1) {
+        HAL_Delay(100);
     }
 }

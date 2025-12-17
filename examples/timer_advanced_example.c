@@ -1,18 +1,17 @@
 /**
  * \file            timer_advanced_example.c
- * \brief           Advanced timer example showing one-shot and multiple events
+ * \brief           Advanced multiple timer example showing various features
  */
 
 #include "hsm.h"
 #include <stdio.h>
 
-/* Custom events */
+/* Events */
 typedef enum {
-    EVT_START = HSM_EVENT_USER,
-    EVT_BUTTON_PRESS,
-    EVT_DEBOUNCE_DONE,     /* One-shot timer for debounce */
-    EVT_AUTO_TIMEOUT,      /* One-shot timer for auto-off */
-    EVT_BLINK_TICK,        /* Periodic timer for blinking */
+    EVT_BUTTON_PRESS = HSM_EVENT_USER,
+    EVT_DEBOUNCE_DONE,
+    EVT_BLINK_TICK,
+    EVT_AUTO_OFF,
 } app_events_t;
 
 /* States */
@@ -20,63 +19,64 @@ static hsm_state_t state_idle;
 static hsm_state_t state_debouncing;
 static hsm_state_t state_active;
 
+/* Timers */
+static hsm_timer_t *timer_debounce;
+static hsm_timer_t *timer_blink;
+static hsm_timer_t *timer_auto_off;
+
 /**
- * \brief           IDLE state - waiting for button
+ * \brief           IDLE state
  */
 static hsm_event_t
 idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[IDLE] Waiting for button press...\n");
+            printf("[IDLE] Waiting for button...\n");
             break;
 
         case EVT_BUTTON_PRESS:
-            printf("[IDLE] Button pressed! Start debouncing...\n");
+            printf("[IDLE] Button pressed! Debouncing...\n");
             hsm_transition(hsm, &state_debouncing, NULL, NULL);
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
 
 /**
- * \brief           DEBOUNCING state - wait 50ms for stable signal
+ * \brief           DEBOUNCING state - 50ms one-shot timer
  */
 static hsm_event_t
 debouncing_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("[DEBOUNCING] Start 50ms one-shot timer\n");
-            /* One-shot timer: fires once after 50ms */
-            hsm_timer_start(hsm, EVT_DEBOUNCE_DONE, 50, HSM_TIMER_ONE_SHOT);
+            
+            /* Create and start debounce timer */
+            if (hsm_timer_create(&timer_debounce, hsm, EVT_DEBOUNCE_DONE,
+                               50, HSM_TIMER_ONE_SHOT) == HSM_RES_OK) {
+                hsm_timer_start(timer_debounce);
+            }
             break;
 
         case HSM_EVENT_EXIT:
             printf("[DEBOUNCING] Exit\n");
-            /* Timer auto-stops if transition happens before timeout */
+            hsm_timer_delete(timer_debounce);
             break;
 
         case EVT_DEBOUNCE_DONE:
-            /* Fired once after 50ms */
-            printf("[DEBOUNCING] Debounce complete! Moving to active state\n");
+            printf("[DEBOUNCING] Debounce complete!\n");
             hsm_transition(hsm, &state_active, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
-            /* Ignore additional presses during debounce */
-            printf("[DEBOUNCING] Ignoring button press (debouncing)\n");
+            printf("[DEBOUNCING] Ignoring extra presses\n");
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
 
 /**
- * \brief           ACTIVE state - device is on, with auto-off and blinking
+ * \brief           ACTIVE state - multiple timers demo
  */
 static hsm_event_t
 active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
@@ -84,50 +84,44 @@ active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[ACTIVE] Device ON\n");
+            printf("[ACTIVE] Device ON - Starting multiple timers\n");
             blink_count = 0;
-
-            /* Start periodic blinking every 500ms */
-            hsm_timer_start(hsm, EVT_BLINK_TICK, 500, HSM_TIMER_PERIODIC);
-
-            /* NOTE: Can't have 2 timers at once!
-             * If you need multiple timers, call hsm_timer_start() again
-             * after handling first event, or use external timer manager
-             */
+            
+            /* Timer 1: LED blink (periodic) */
+            if (hsm_timer_create(&timer_blink, hsm, EVT_BLINK_TICK,
+                               500, HSM_TIMER_PERIODIC) == HSM_RES_OK) {
+                hsm_timer_start(timer_blink);
+                printf("[ACTIVE] Blink timer started (500ms periodic)\n");
+            }
+            
+            /* Timer 2: Auto-off (one-shot) */
+            if (hsm_timer_create(&timer_auto_off, hsm, EVT_AUTO_OFF,
+                               5000, HSM_TIMER_ONE_SHOT) == HSM_RES_OK) {
+                hsm_timer_start(timer_auto_off);
+                printf("[ACTIVE] Auto-off timer started (5s one-shot)\n");
+            }
             break;
 
         case HSM_EVENT_EXIT:
-            printf("[ACTIVE] Device OFF\n");
+            printf("[ACTIVE] Device OFF - Cleanup timers\n");
+            hsm_timer_delete(timer_blink);
+            hsm_timer_delete(timer_auto_off);
             break;
 
         case EVT_BLINK_TICK:
-            /* Fires every 500ms */
             blink_count++;
-            printf("[ACTIVE] Blink tick %d\n", blink_count);
+            printf("[ACTIVE] Blink #%d\n", blink_count);
+            break;
 
-            /* After 10 blinks (5 seconds), start auto-off timer */
-            if (blink_count >= 10) {
-                printf("[ACTIVE] 10 blinks done, starting 3s auto-off timer\n");
-                /* Switch to one-shot timer for auto-off */
-                hsm_timer_start(hsm, EVT_AUTO_TIMEOUT, 3000, HSM_TIMER_ONE_SHOT);
-            }
-            return HSM_EVENT_NONE;
-
-        case EVT_AUTO_TIMEOUT:
-            /* Fires once after 3000ms */
-            printf("[ACTIVE] Auto-off timeout! Going to idle\n");
+        case EVT_AUTO_OFF:
+            printf("[ACTIVE] Auto-off triggered!\n");
             hsm_transition(hsm, &state_idle, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
-            /* Manual turn off */
-            printf("[ACTIVE] Button pressed - manual turn off\n");
+            printf("[ACTIVE] Button pressed - manual off\n");
             hsm_transition(hsm, &state_idle, NULL, NULL);
-            /* Timer automatically stops here! */
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
@@ -136,43 +130,36 @@ void
 app_main(void) {
     hsm_t device_hsm;
 
-    printf("=== HSM Advanced Timer Example ===\n");
-    printf("Shows: one-shot timer, periodic timer, timer auto-stop\n\n");
+    printf("=== HSM Advanced Multiple Timer Example ===\n\n");
+    printf("Features demonstrated:\n");
+    printf("1. One-shot timer (debounce)\n");
+    printf("2. Periodic timer (blink)\n");
+    printf("3. Multiple timers per state\n");
+    printf("4. Timer auto-stop on transition\n");
+    printf("5. Manual timer cleanup\n\n");
 
     /* Create states */
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
     hsm_state_create(&state_debouncing, "DEBOUNCING", debouncing_handler, NULL);
     hsm_state_create(&state_active, "ACTIVE", active_handler, NULL);
 
-    /* Initialize HSM (timer_if = NULL for this example) */
+    /* Initialize (NULL timer_if for demo) */
     hsm_init(&device_hsm, "DeviceHSM", &state_idle, NULL);
 
     printf("\n--- Simulating button press ---\n");
     hsm_dispatch(&device_hsm, EVT_BUTTON_PRESS, NULL);
 
-    /* Simulate 50ms delay */
-    printf("\n[Waiting 50ms...]\n");
-    /* In real app: vTaskDelay() or HAL_Delay() */
-
-    /* Manually trigger debounce timeout for demo */
+    printf("\n[Simulating 50ms delay...]\n");
     hsm_dispatch(&device_hsm, EVT_DEBOUNCE_DONE, NULL);
 
-    /* Simulate periodic blink ticks */
     printf("\n--- Simulating blink ticks ---\n");
-    for (int i = 0; i < 11; i++) {
-        printf("\n[Tick %d]\n", i + 1);
+    for (int i = 0; i < 3; i++) {
+        printf("\n[Tick...]\n");
         hsm_dispatch(&device_hsm, EVT_BLINK_TICK, NULL);
     }
 
-    /* Simulate auto-off timeout */
-    printf("\n[Waiting 3000ms for auto-off...]\n");
-    hsm_dispatch(&device_hsm, EVT_AUTO_TIMEOUT, NULL);
+    printf("\n[Simulating 5s auto-off...]\n");
+    hsm_dispatch(&device_hsm, EVT_AUTO_OFF, NULL);
 
     printf("\n=== Example Complete ===\n");
-    printf("\nKey points:\n");
-    printf("1. Custom events (EVT_DEBOUNCE_DONE, EVT_BLINK_TICK, etc)\n");
-    printf("2. One-shot timer (HSM_TIMER_ONE_SHOT)\n");
-    printf("3. Periodic timer (HSM_TIMER_PERIODIC)\n");
-    printf("4. Timer auto-stops when state changes\n");
-    printf("5. Can switch timer mode in same state\n");
 }

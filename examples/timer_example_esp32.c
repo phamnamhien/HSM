@@ -1,6 +1,6 @@
 /**
  * \file            timer_example_esp32.c
- * \brief           HSM timer example for ESP32
+ * \brief           Multiple timer example for ESP32 with FreeRTOS
  */
 
 #include "hsm.h"
@@ -36,8 +36,8 @@ esp32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_
     timer->callback = callback;
     timer->arg = arg;
 
-    timer->handle = xTimerCreate("hsm_timer", pdMS_TO_TICKS(period_ms), repeat ? pdTRUE : pdFALSE,
-                                  timer, esp32_timer_callback);
+    timer->handle = xTimerCreate("hsm_timer", pdMS_TO_TICKS(period_ms), 
+                                  repeat ? pdTRUE : pdFALSE, timer, esp32_timer_callback);
 
     if (timer->handle == NULL) {
         free(timer);
@@ -68,129 +68,93 @@ esp32_timer_get_ms(void) {
     return xTaskGetTickCount() * portTICK_PERIOD_MS;
 }
 
-static const hsm_timer_if_t esp32_timer_if = {.start = esp32_timer_start,
-                                               .stop = esp32_timer_stop,
-                                               .get_ms = esp32_timer_get_ms};
+static const hsm_timer_if_t esp32_timer_if = {
+    .start = esp32_timer_start,
+    .stop = esp32_timer_stop,
+    .get_ms = esp32_timer_get_ms
+};
 
 /* HSM states */
 static hsm_state_t state_idle;
-static hsm_state_t state_blinking;
-static hsm_state_t state_fast_blink;
+static hsm_state_t state_active;
+
+/* Timers */
+static hsm_timer_t *timer_blink;
+static hsm_timer_t *timer_timeout;
 
 /* Events */
 typedef enum {
     EVT_START = HSM_EVENT_USER,
     EVT_STOP,
-    EVT_SPEED_UP,
-    EVT_BLINK_TIMEOUT,     /* Custom timeout event for blinking */
-    EVT_FAST_TIMEOUT,      /* Custom timeout event for fast blink */
+    EVT_BLINK_TICK,
+    EVT_AUTO_TIMEOUT,
 } app_events_t;
 
 /**
- * \brief           IDLE state - LED off
+ * \brief           IDLE state
  */
 static hsm_event_t
 idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
             ESP_LOGI(TAG, "[IDLE] LED OFF");
-            /* Turn off LED here */
-            break;
-
-        case HSM_EVENT_EXIT:
-            ESP_LOGI(TAG, "[IDLE] Exit");
             break;
 
         case EVT_START:
-            ESP_LOGI(TAG, "[IDLE] Start blinking");
-            hsm_transition(hsm, &state_blinking, NULL, NULL);
+            ESP_LOGI(TAG, "[IDLE] Start");
+            hsm_transition(hsm, &state_active, NULL, NULL);
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
 
 /**
- * \brief           BLINKING state - LED blinks every 1000ms
+ * \brief           ACTIVE state with multiple timers
  */
 static hsm_event_t
-blinking_handler(hsm_t* hsm, hsm_event_t event, void* data) {
+active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     static uint8_t led_state = 0;
 
     switch (event) {
         case HSM_EVENT_ENTRY:
-            ESP_LOGI(TAG, "[BLINKING] Entry - Start 1000ms periodic timer");
+            ESP_LOGI(TAG, "[ACTIVE] Entry");
             led_state = 0;
-            /* Start periodic timer with custom event */
-            hsm_timer_start(hsm, EVT_BLINK_TIMEOUT, 1000, HSM_TIMER_PERIODIC);
             
-            /* NOTE: If you call transition here, timer will auto-stop! */
-            // hsm_transition(hsm, &state_fast_blink, NULL, NULL); // Timer stops automatically
+            /* Create LED blink timer (periodic) */
+            if (hsm_timer_create(&timer_blink, hsm, EVT_BLINK_TICK, 
+                               500, HSM_TIMER_PERIODIC) == HSM_RES_OK) {
+                hsm_timer_start(timer_blink);
+                ESP_LOGI(TAG, "[ACTIVE] Blink timer started");
+            }
+            
+            /* Create auto-off timeout timer (one-shot) */
+            if (hsm_timer_create(&timer_timeout, hsm, EVT_AUTO_TIMEOUT,
+                               5000, HSM_TIMER_ONE_SHOT) == HSM_RES_OK) {
+                hsm_timer_start(timer_timeout);
+                ESP_LOGI(TAG, "[ACTIVE] Auto-off timer started (5s)");
+            }
             break;
 
         case HSM_EVENT_EXIT:
-            ESP_LOGI(TAG, "[BLINKING] Exit - Timer auto-stopped");
-            /* Timer is automatically stopped when leaving state */
+            ESP_LOGI(TAG, "[ACTIVE] Exit - Cleanup timers");
+            hsm_timer_delete(timer_blink);
+            hsm_timer_delete(timer_timeout);
             break;
 
-        case EVT_BLINK_TIMEOUT:
-            /* Called every 1000ms - custom event! */
+        case EVT_BLINK_TICK:
             led_state = !led_state;
-            ESP_LOGI(TAG, "[BLINKING] Custom timeout - LED %s", led_state ? "ON" : "OFF");
-            /* Toggle LED here */
+            ESP_LOGI(TAG, "[ACTIVE] LED %s", led_state ? "ON" : "OFF");
             break;
 
-        case EVT_STOP:
-            ESP_LOGI(TAG, "[BLINKING] Stop");
+        case EVT_AUTO_TIMEOUT:
+            ESP_LOGI(TAG, "[ACTIVE] Auto-off timeout!");
             hsm_transition(hsm, &state_idle, NULL, NULL);
             return HSM_EVENT_NONE;
 
-        case EVT_SPEED_UP:
-            ESP_LOGI(TAG, "[BLINKING] Speed up!");
-            hsm_transition(hsm, &state_fast_blink, NULL, NULL);
-            /* Timer automatically stops here! */
-            return HSM_EVENT_NONE;
-
-        default:
-            break;
-    }
-    return event;
-}
-
-/**
- * \brief           FAST_BLINK state - LED blinks every 200ms
- */
-static hsm_event_t
-fast_blink_handler(hsm_t* hsm, hsm_event_t event, void* data) {
-    static uint8_t led_state = 0;
-
-    switch (event) {
-        case HSM_EVENT_ENTRY:
-            ESP_LOGI(TAG, "[FAST_BLINK] Entry - Start 200ms periodic timer");
-            led_state = 0;
-            /* Start periodic timer with different custom event */
-            hsm_timer_start(hsm, EVT_FAST_TIMEOUT, 200, HSM_TIMER_PERIODIC);
-            break;
-
-        case HSM_EVENT_EXIT:
-            ESP_LOGI(TAG, "[FAST_BLINK] Exit - Timer auto-stopped");
-            break;
-
-        case EVT_FAST_TIMEOUT:
-            /* Called every 200ms - different custom event! */
-            led_state = !led_state;
-            ESP_LOGI(TAG, "[FAST_BLINK] Fast timeout - LED %s", led_state ? "ON" : "OFF");
-            break;
-
         case EVT_STOP:
-            ESP_LOGI(TAG, "[FAST_BLINK] Stop");
+            ESP_LOGI(TAG, "[ACTIVE] Manual stop");
             hsm_transition(hsm, &state_idle, NULL, NULL);
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
@@ -199,29 +163,22 @@ void
 app_main(void) {
     hsm_t led_hsm;
 
-    ESP_LOGI(TAG, "=== HSM Timer Example for ESP32 ===");
+    ESP_LOGI(TAG, "=== Multiple Timer HSM Example for ESP32 ===");
 
     /* Create states */
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
-    hsm_state_create(&state_blinking, "BLINKING", blinking_handler, NULL);
-    hsm_state_create(&state_fast_blink, "FAST_BLINK", fast_blink_handler, NULL);
+    hsm_state_create(&state_active, "ACTIVE", active_handler, NULL);
 
-    /* Initialize HSM with timer interface */
+    /* Initialize HSM */
     hsm_init(&led_hsm, "LED_HSM", &state_idle, &esp32_timer_if);
 
-    ESP_LOGI(TAG, "\n--- Test sequence ---");
-
-    /* Test sequence */
+    /* Test */
     vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "--- Starting device ---");
     hsm_dispatch(&led_hsm, EVT_START, NULL);
 
-    vTaskDelay(pdMS_TO_TICKS(3500)); /* Let it blink 3 times */
-
-    hsm_dispatch(&led_hsm, EVT_SPEED_UP, NULL);
-
-    vTaskDelay(pdMS_TO_TICKS(2000)); /* Fast blink for 2 seconds */
-
-    hsm_dispatch(&led_hsm, EVT_STOP, NULL);
+    /* Let it run - will auto-off after 5s */
+    vTaskDelay(pdMS_TO_TICKS(6000));
 
     ESP_LOGI(TAG, "=== Example Complete ===");
 }

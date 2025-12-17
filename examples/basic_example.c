@@ -144,7 +144,7 @@ app_main(void) {
     }
 
     /* Initialize HSM with IDLE as initial state */
-    res = hsm_init(&my_hsm, "BasicHSM", &state_idle);
+    res = hsm_init(&my_hsm, "BasicHSM", &state_idle, NULL);
     if (res != HSM_RES_OK) {
         printf("Failed to initialize HSM\n");
         return;
