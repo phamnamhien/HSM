@@ -6,20 +6,22 @@ A lightweight and efficient Hierarchical State Machine (HSM) library for embedde
 
 - **Hierarchical State Management**: Support for nested states with parent-child relationships
 - **Event-driven Architecture**: Clean event handling with propagation up the state hierarchy
+- **Safe Transitions**: Can safely call hsm_transition() inside ENTRY event handler with deferred execution
+- **Built-in Timer Support**: Platform-agnostic timer interface with one-shot and periodic modes
 - **State History**: Optional history state feature to return to previous states
-- **Memory Efficient**: Minimal RAM footprint suitable for resource-constrained systems
+- **Memory Efficient**: Minimal RAM footprint (~24-28 bytes per HSM) suitable for resource-constrained systems
 - **Configurable**: Adjustable maximum depth and optional features
 - **Type-safe**: Strong typing with clear return values
 - **Zero Dependencies**: Only requires standard C library (stdint.h)
-- **Clean API**: Simple and intuitive interface
+- **Clean API**: Simple and intuitive interface with parameter passing and transition hooks
 
 ## Use Cases
 
-- Embedded system control logic
+- Embedded system control logic with timing requirements
 - Protocol state machines (UART, CAN, Modbus, etc.)
 - User interface state management
-- Robot behavior control
-- IoT device state management
+- Robot behavior control with state timeouts
+- IoT device state management with auto-transitions
 - Industrial automation controllers
 
 ## Key Concepts
@@ -30,20 +32,29 @@ States represent different modes or conditions in your system. Each state can:
 - Have a parent state (for hierarchy)
 - Execute entry/exit actions
 - Propagate unhandled events to parent
+- Start timers that trigger custom events
 
 ### Events
 Events trigger state transitions or actions. The library provides standard events:
-- `HSM_EVENT_ENTRY` - Called when entering a state
+- `HSM_EVENT_ENTRY` - Called when entering a state (safe to call hsm_transition here)
 - `HSM_EVENT_EXIT` - Called when exiting a state
-- `HSM_EVENT_INIT` - Called after entering for initialization
 - `HSM_EVENT_USER` - Starting point for custom events
 
 ### Transitions
 Transitions move between states, automatically handling:
 - Exit actions for current state chain
+- Optional transition method hook (for cleanup, logging)
 - Entry actions for new state chain
 - Finding the Lowest Common Ancestor (LCA)
-- Calling initialization
+- Timer auto-stop when leaving state
+- Parameter passing to ENTRY/EXIT events
+
+### Timers
+Built-in timer support with:
+- Custom events dispatched on timeout
+- One-shot or periodic modes
+- Platform abstraction (ESP32, STM32, AVR, etc.)
+- Automatic cleanup on state transitions
 
 ## Quick Start
 
@@ -60,7 +71,7 @@ hsm_event_t
 state_idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
-            /* Entry action */
+            /* Entry action - safe to call transition here! */
             printf("Entering idle state\n");
             break;
             
@@ -69,9 +80,9 @@ state_idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             printf("Exiting idle state\n");
             break;
             
-        case HSM_EVENT_USER + 1: /* START event */
-            hsm_transition(hsm, &state_running);
-            break;
+        case EVT_START: /* Custom event */
+            hsm_transition(hsm, &state_running, NULL, NULL);
+            return HSM_EVENT_NONE;
             
         default:
             return event; /* Propagate to parent */
@@ -79,21 +90,32 @@ state_idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     return HSM_EVENT_NONE; /* Event handled */
 }
 
-/* State handler for running state */
+/* State handler for running state with timer */
 hsm_event_t
 state_running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("Entering running state\n");
+            /* Start periodic timer - fires EVT_TIMEOUT every 1000ms */
+            hsm_timer_start(hsm, EVT_TIMEOUT, 1000, HSM_TIMER_PERIODIC);
             break;
             
-        case HSM_EVENT_USER + 2: /* STOP event */
-            hsm_transition(hsm, &state_idle);
+        case HSM_EVENT_EXIT:
+            printf("Exiting running state\n");
+            /* Timer auto-stops when leaving state */
             break;
             
-        case HSM_EVENT_USER + 3: /* ERROR event */
-            hsm_transition(hsm, &state_error);
+        case EVT_TIMEOUT:
+            printf("Timer tick\n");
             break;
+            
+        case EVT_STOP:
+            hsm_transition(hsm, &state_idle, NULL, NULL);
+            return HSM_EVENT_NONE;
+            
+        case EVT_ERROR:
+            hsm_transition(hsm, &state_error, NULL, NULL);
+            return HSM_EVENT_NONE;
             
         default:
             return event;
@@ -104,17 +126,24 @@ state_running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 int main(void) {
     hsm_t my_hsm;
     
+    /* Timer interface (platform-specific) */
+    const hsm_timer_if_t timer_if = {
+        .start = platform_timer_start,
+        .stop = platform_timer_stop,
+        .get_ms = platform_get_ms
+    };
+    
     /* Create states */
     hsm_state_create(&state_idle, "Idle", state_idle_handler, NULL);
     hsm_state_create(&state_running, "Running", state_running_handler, NULL);
     hsm_state_create(&state_error, "Error", state_error_handler, NULL);
     
     /* Initialize HSM with idle as initial state */
-    hsm_init(&my_hsm, "MyHSM", &state_idle);
+    hsm_init(&my_hsm, "MyHSM", &state_idle, &timer_if);
     
     /* Dispatch events */
-    hsm_dispatch(&my_hsm, HSM_EVENT_USER + 1, NULL); /* START */
-    hsm_dispatch(&my_hsm, HSM_EVENT_USER + 2, NULL); /* STOP */
+    hsm_dispatch(&my_hsm, EVT_START, NULL);
+    hsm_dispatch(&my_hsm, EVT_STOP, NULL);
     
     return 0;
 }
@@ -132,27 +161,25 @@ hsm_state_t state_child1, state_child2;
 hsm_event_t
 parent_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
-        case HSM_EVENT_USER + 10: /* Common event handled by parent */
+        case EVT_COMMON: /* Common event handled by parent */
             printf("Parent handling common event\n");
-            break;
+            return HSM_EVENT_NONE;
             
         default:
             return event;
     }
-    return HSM_EVENT_NONE;
 }
 
 hsm_event_t
 child1_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
-        case HSM_EVENT_USER + 1:
-            hsm_transition(hsm, &state_child2);
-            break;
+        case EVT_SWITCH:
+            hsm_transition(hsm, &state_child2, NULL, NULL);
+            return HSM_EVENT_NONE;
             
         default:
             return event; /* Propagate to parent */
     }
-    return HSM_EVENT_NONE;
 }
 
 int main(void) {
@@ -165,13 +192,44 @@ int main(void) {
     hsm_state_create(&state_child1, "Child1", child1_handler, &state_parent);
     hsm_state_create(&state_child2, "Child2", child2_handler, &state_parent);
     
-    hsm_init(&hsm, "HierarchicalHSM", &state_child1);
+    hsm_init(&hsm, "HierarchicalHSM", &state_child1, NULL);
     
-    /* Event 10 will be handled by parent if child doesn't handle it */
-    hsm_dispatch(&hsm, HSM_EVENT_USER + 10, NULL);
+    /* EVT_COMMON will be handled by parent if child doesn't handle it */
+    hsm_dispatch(&hsm, EVT_COMMON, NULL);
     
     return 0;
 }
+```
+
+### Transition with Parameters Example
+
+```c
+typedef struct {
+    uint32_t error_code;
+    const char* message;
+} error_data_t;
+
+void cleanup_hook(hsm_t* hsm, void* param) {
+    printf("Cleanup between states\n");
+    /* Log to database, sync state, free resources, etc. */
+}
+
+hsm_event_t
+error_handler(hsm_t* hsm, hsm_event_t event, void* data) {
+    switch (event) {
+        case HSM_EVENT_ENTRY:
+            if (data != NULL) {
+                error_data_t* err = (error_data_t*)data;
+                printf("Error: %s (code: %u)\n", err->message, err->error_code);
+            }
+            break;
+    }
+    return event;
+}
+
+/* Transition with parameter and hook */
+error_data_t err = {.error_code = 1001, .message = "Connection failed"};
+hsm_transition(hsm, &state_error, &err, cleanup_hook);
 ```
 
 ## Configuration
@@ -327,34 +385,65 @@ typedef enum {
 } hsm_result_t;
 ```
 
+## Timer Modes
+
+```c
+typedef enum {
+    HSM_TIMER_ONE_SHOT = 0,      /* Timer fires once */
+    HSM_TIMER_PERIODIC = 1,      /* Timer fires repeatedly */
+} hsm_timer_mode_t;
+```
+
 ## Best Practices
 
-1. **Always handle standard events**: Entry, Exit, and Init
-2. **Return HSM_EVENT_NONE** when event is handled
-3. **Return event** to propagate to parent
-4. **Keep state handlers simple**: Delegate complex logic to separate functions
-5. **Use meaningful event numbers**: Define custom events starting from `HSM_EVENT_USER`
-6. **Check return codes**: Always check return values from API functions
+1. **Safe Transitions**: You can safely call `hsm_transition()` inside `HSM_EVENT_ENTRY` handler
+2. **Always handle standard events**: Entry and Exit
+3. **Return HSM_EVENT_NONE** when event is handled
+4. **Return event** to propagate to parent
+5. **Keep state handlers simple**: Delegate complex logic to separate functions
+6. **Use meaningful event numbers**: Define custom events starting from `HSM_EVENT_USER`
+7. **Check return codes**: Always check return values from API functions
+8. **Timer cleanup**: Timers automatically stop on state transitions
+9. **Use custom events for timers**: Define unique events for different timer purposes
 
 ## Memory Usage
 
-- HSM instance: ~12-16 bytes (depending on configuration)
+- HSM instance: ~24-28 bytes (depending on configuration)
 - State structure: ~12 bytes
 - Stack usage: Proportional to state depth (typically < 100 bytes)
 
 ## Platform Requirements
 
-- C99 or later
+- C11 compiler
 - `<stdint.h>` support
 - No dynamic memory allocation
-- No external dependencies
+- No external dependencies (timer interface optional)
 
 ## Integration
+
+### For ESP-IDF Projects
+
+1. Add as component in `components/hsm/`
+2. Use `idf_component_register()` in CMakeLists.txt
+3. Configure via menuconfig: `Component config → HSM Configuration`
+
+### For Other Platforms
 
 1. Add `hsm.c` and `hsm.h` to your project
 2. Include `hsm.h` in your source files
 3. Configure options in `hsm.h` if needed
-4. Compile and link with your project
+4. Implement timer interface if using timers
+5. Compile and link with your project
+
+## Examples
+
+See `examples/` directory for complete examples:
+- `basic_example.c` - Simple 3-state machine
+- `hierarchical_example.c` - Nested state hierarchy
+- `timer_example_esp32.c` - Timer with ESP32 FreeRTOS
+- `timer_example_stm32.c` - Timer with STM32 HAL
+- `timer_advanced_example.c` - One-shot and periodic timers
+- `transition_param_example.c` - Parameter passing and hooks
 
 ## License
 
@@ -362,7 +451,7 @@ MIT License - See source files for full license text.
 
 ## Author
 
-Pham Nam Hien - Embedded Systems Engineer
+Pham Nam Hien (phamnamhien)
 
 ## Contributing
 
@@ -376,11 +465,18 @@ Contributions are welcome! Please ensure:
 
 - v1.0.0 - Initial release
   - Hierarchical state machine core
-  - Event dispatching
-  - State transitions
+  - Event dispatching with safe deferred transitions
+  - State transitions with parameter passing and hooks
+  - Built-in timer support with custom events
   - History state support
   - Configuration options
+  - ESP-IDF component integration
 
 ## Support
 
-For issues, questions, or contributions, please contact the author or create an issue in the repository.
+For issues, questions, or contributions, please contact the author.
+
+## 💖 Support This Project
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q5Q1JW4XS)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/phamnamhien)

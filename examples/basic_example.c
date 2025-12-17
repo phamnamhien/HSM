@@ -37,10 +37,6 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             printf("[IDLE] Exit\n");
             break;
 
-        case HSM_EVENT_INIT:
-            printf("[IDLE] Init\n");
-            break;
-
         case EVT_START:
             printf("[IDLE] Received START event\n");
             hsm_transition(hsm, &state_running, NULL, NULL);
@@ -69,10 +65,6 @@ running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case HSM_EVENT_EXIT:
             printf("[RUNNING] Exit\n");
-            break;
-
-        case HSM_EVENT_INIT:
-            printf("[RUNNING] Init\n");
             break;
 
         case EVT_STOP:
@@ -108,10 +100,6 @@ error_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case HSM_EVENT_EXIT:
             printf("[ERROR] Exit\n");
-            break;
-
-        case HSM_EVENT_INIT:
-            printf("[ERROR] Init\n");
             break;
 
         case EVT_RESET:

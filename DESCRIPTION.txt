@@ -62,4 +62,4 @@ MIT License - Free for commercial and personal use
 
 AUTHOR
 ------
-Pham Nam Hien (phamnamhien) - Embedded Systems Engineer
+Pham Nam Hien (phamnamhien)
