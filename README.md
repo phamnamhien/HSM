@@ -362,7 +362,7 @@ MIT License - See source files for full license text.
 
 ## Author
 
-Pham Nam Hien - Embedded Systems Engineer
+Pham Nam Hien
 
 ## Contributing
 
@@ -384,3 +384,10 @@ Contributions are welcome! Please ensure:
 ## Support
 
 For issues, questions, or contributions, please contact the author or create an issue in the repository.
+
+
+## 💖 Support This Project
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q5Q1JW4XS)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/phamnamhien)
+
