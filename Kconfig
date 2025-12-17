@@ -1,0 +1,19 @@
+menu "HSM Configuration"
+
+    config HSM_MAX_DEPTH
+        int "Maximum state hierarchy depth"
+        default 8
+        range 2 16
+        help
+            Maximum number of nested state levels supported.
+            Higher values use more stack memory during transitions.
+
+    config HSM_HISTORY
+        bool "Enable state history feature"
+        default y
+        help
+            Enable the state history mechanism which allows
+            transitioning back to the previous state.
+            Adds 4 bytes to HSM instance size.
+
+endmenu

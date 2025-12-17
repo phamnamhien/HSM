@@ -1,0 +1,32 @@
+version: "1.0.0"
+description: "Lightweight Hierarchical State Machine (HSM) library for embedded systems"
+url: https://github.com/phamnamhien/hsm
+dependencies:
+  idf: ">=4.4"
+
+targets:
+  - esp32
+  - esp32s2
+  - esp32s3
+  - esp32c3
+  - esp32c2
+  - esp32c6
+  - esp32h2
+
+tags:
+  - state-machine
+  - hsm
+  - fsm
+  - embedded
+  - rtos
+
+license: MIT
+maintainers:
+  - name: "Pham Nam Hien"
+    email: "phamnamhien@gmail.com"
+
+examples:
+  - path: examples/basic_example.c
+  - path: examples/hierarchical_example.c
+  - path: timer_advanced_example.c
+  - path: timer_example_esp32.c

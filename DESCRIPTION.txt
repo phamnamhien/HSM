@@ -1,0 +1,65 @@
+HSM - Hierarchical State Machine Library
+=========================================
+
+Lightweight Hierarchical State Machine (HSM) library for embedded systems. Features: nested states with parent-child relationships, safe transitions with deferred execution, built-in timer support with platform abstraction (ESP32/STM32/AVR), state history, transition hooks with parameter passing. Zero dynamic allocation, minimal footprint (~24-28 bytes per HSM). Portable C11 code with ESP-IDF component support.
+
+KEY FEATURES
+------------
+- Hierarchical states with automatic parent-child event propagation
+- Safe transitions: call hsm_transition() inside ENTRY event handler
+- Built-in timer support with custom events (one-shot/periodic)
+- Platform-agnostic timer interface (ESP32, STM32, AVR)
+- Transition hooks with parameter passing to ENTRY/EXIT events
+- Optional state history support
+- Minimal memory footprint (<30 bytes per HSM instance)
+- Zero dynamic memory allocation
+- ESP-IDF component ready with Kconfig integration
+
+QUICK OVERVIEW
+--------------
+This library provides a powerful way to implement complex state machines with hierarchical
+relationships. Events propagate up the state hierarchy, timers can trigger custom events,
+and transitions can safely occur within state entry handlers using deferred execution.
+
+Perfect for:
+- Embedded control systems with timing requirements
+- Communication protocol implementations
+- Robot behavior management with state timeouts
+- IoT device state control with auto-transitions
+- Industrial automation systems
+
+USAGE EXAMPLE
+-------------
+hsm_t machine;
+hsm_state_t idle, running;
+
+// Timer interface for ESP32/STM32
+const hsm_timer_if_t timer_if = {
+    .start = platform_timer_start,
+    .stop = platform_timer_stop,
+    .get_ms = platform_get_ms
+};
+
+hsm_state_create(&idle, "Idle", idle_handler, NULL);
+hsm_state_create(&running, "Running", running_handler, NULL);
+hsm_init(&machine, "Controller", &idle, &timer_if);
+
+// In state handler:
+case HSM_EVENT_ENTRY:
+    hsm_timer_start(hsm, EVT_TIMEOUT, 1000, HSM_TIMER_PERIODIC);
+    break;
+
+REQUIREMENTS
+------------
+- C11 compiler
+- stdint.h support
+- No OS required (timer interface optional)
+- No external libraries
+
+LICENSE
+-------
+MIT License - Free for commercial and personal use
+
+AUTHOR
+------
+Pham Nam Hien (phamnamhien) - Embedded Systems Engineer
