@@ -6,7 +6,7 @@
 #include "hsm.h"
 #include <stdio.h>
 
-/* Define custom events */
+/* Events */
 typedef enum {
     EVT_BUTTON_PRESS = HSM_EVENT_USER,
     EVT_TIMEOUT,
@@ -14,12 +14,12 @@ typedef enum {
     EVT_COMMON_ACTION,
 } app_events_t;
 
-/* State structures */
-static hsm_state_t state_system;        /* Root state */
-static hsm_state_t state_active;        /* Parent state */
-static hsm_state_t state_mode1;         /* Child state */
-static hsm_state_t state_mode2;         /* Child state */
-static hsm_state_t state_standby;       /* Sibling state */
+/* States */
+static hsm_state_t state_system;
+static hsm_state_t state_active;
+static hsm_state_t state_mode1;
+static hsm_state_t state_mode2;
+static hsm_state_t state_standby;
 
 /**
  * \brief           SYSTEM root state handler
@@ -36,11 +36,8 @@ system_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_COMMON_ACTION:
-            printf("[SYSTEM] Common action handled by root\n");
+            printf("[SYSTEM] Common action handled\n");
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
     return event;
 }
@@ -52,22 +49,19 @@ static hsm_event_t
 active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[ACTIVE] Entry (parent state)\n");
+            printf("[ACTIVE] Entry\n");
             break;
 
         case HSM_EVENT_EXIT:
-            printf("[ACTIVE] Exit (parent state)\n");
+            printf("[ACTIVE] Exit\n");
             break;
 
         case EVT_TIMEOUT:
-            printf("[ACTIVE] Timeout - going to standby\n");
+            printf("[ACTIVE] Timeout -> STANDBY\n");
             hsm_transition(hsm, &state_standby, NULL, NULL);
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
-    return event; /* Propagate to parent (SYSTEM) */
+    return event;
 }
 
 /**
@@ -85,18 +79,15 @@ mode1_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_MODE_CHANGE:
-            printf("[MODE1] Mode change to MODE2\n");
+            printf("[MODE1] Change -> MODE2\n");
             hsm_transition(hsm, &state_mode2, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
             printf("[MODE1] Button pressed\n");
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
-    return event; /* Propagate to parent (ACTIVE) */
+    return event;
 }
 
 /**
@@ -114,18 +105,15 @@ mode2_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_MODE_CHANGE:
-            printf("[MODE2] Mode change to MODE1\n");
+            printf("[MODE2] Change -> MODE1\n");
             hsm_transition(hsm, &state_mode1, NULL, NULL);
             return HSM_EVENT_NONE;
 
         case EVT_BUTTON_PRESS:
-            printf("[MODE2] Button pressed (different action)\n");
+            printf("[MODE2] Button pressed\n");
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
-    return event; /* Propagate to parent (ACTIVE) */
+    return event;
 }
 
 /**
@@ -143,18 +131,15 @@ standby_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_BUTTON_PRESS:
-            printf("[STANDBY] Button pressed - waking up to MODE1\n");
+            printf("[STANDBY] Wake -> MODE1\n");
             hsm_transition(hsm, &state_mode1, NULL, NULL);
             return HSM_EVENT_NONE;
-
-        default:
-            break;
     }
-    return event; /* Propagate to parent (SYSTEM) */
+    return event;
 }
 
 /**
- * \brief           Main application entry
+ * \brief           Main
  */
 void
 app_main(void) {
@@ -162,67 +147,53 @@ app_main(void) {
 
     printf("=== HSM Hierarchical Example ===\n\n");
 
-    /* Create state hierarchy:
+    /* Create hierarchy:
      * SYSTEM (root)
-     *   ├── ACTIVE (parent)
-     *   │   ├── MODE1 (child)
-     *   │   └── MODE2 (child)
-     *   └── STANDBY (sibling)
+     *   ├── ACTIVE
+     *   │   ├── MODE1
+     *   │   └── MODE2
+     *   └── STANDBY
      */
 
-    /* Create root state */
     hsm_state_create(&state_system, "SYSTEM", system_handler, NULL);
-
-    /* Create parent state under root */
     hsm_state_create(&state_active, "ACTIVE", active_handler, &state_system);
-
-    /* Create child states under ACTIVE */
     hsm_state_create(&state_mode1, "MODE1", mode1_handler, &state_active);
     hsm_state_create(&state_mode2, "MODE2", mode2_handler, &state_active);
-
-    /* Create standby state under root */
     hsm_state_create(&state_standby, "STANDBY", standby_handler, &state_system);
 
-    /* Initialize HSM with MODE1 as initial state */
+    /* Init */
     hsm_init(&my_hsm, "HierarchicalHSM", &state_mode1, NULL);
 
-    printf("\n=== Testing State Hierarchy ===\n\n");
-
-    /* Test 1: Button press in MODE1 */
-    printf("--- Test 1: Button press in MODE1 ---\n");
+    /* Test */
+    printf("\n--- Test 1: Button in MODE1 ---\n");
     hsm_dispatch(&my_hsm, EVT_BUTTON_PRESS, NULL);
 
-    /* Test 2: Mode change from MODE1 to MODE2 */
-    printf("\n--- Test 2: Mode change (MODE1 -> MODE2) ---\n");
+    printf("\n--- Test 2: MODE1 -> MODE2 ---\n");
     hsm_dispatch(&my_hsm, EVT_MODE_CHANGE, NULL);
 
-    /* Test 3: Button press in MODE2 */
-    printf("\n--- Test 3: Button press in MODE2 ---\n");
+    printf("\n--- Test 3: Button in MODE2 ---\n");
     hsm_dispatch(&my_hsm, EVT_BUTTON_PRESS, NULL);
 
-    /* Test 4: Common action (handled by root) */
-    printf("\n--- Test 4: Common action (propagates to SYSTEM) ---\n");
+    printf("\n--- Test 4: Common action (propagate to SYSTEM) ---\n");
     hsm_dispatch(&my_hsm, EVT_COMMON_ACTION, NULL);
 
-    /* Test 5: Timeout (handled by ACTIVE parent) */
-    printf("\n--- Test 5: Timeout (handled by ACTIVE parent) ---\n");
+    printf("\n--- Test 5: Timeout (handled by ACTIVE) ---\n");
     hsm_dispatch(&my_hsm, EVT_TIMEOUT, NULL);
 
-    /* Test 6: Wake from standby */
-    printf("\n--- Test 6: Button press in STANDBY ---\n");
+    printf("\n--- Test 6: Wake from STANDBY ---\n");
     hsm_dispatch(&my_hsm, EVT_BUTTON_PRESS, NULL);
 
-    /* Test 7: Check state membership */
-    printf("\n--- Test 7: Check state membership ---\n");
+    printf("\n--- Test 7: State membership ---\n");
     if (hsm_is_in_state(&my_hsm, &state_mode1)) {
-        printf("HSM is in MODE1 state\n");
+        printf("In MODE1\n");
     }
     if (hsm_is_in_state(&my_hsm, &state_active)) {
-        printf("HSM is in ACTIVE parent state\n");
+        printf("In ACTIVE\n");
     }
     if (hsm_is_in_state(&my_hsm, &state_system)) {
-        printf("HSM is in SYSTEM root state\n");
+        printf("In SYSTEM\n");
     }
 
-    printf("\n=== Example Complete ===\n");
+    printf("\n=== Complete ===\n");
 }
+

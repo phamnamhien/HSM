@@ -1,13 +1,13 @@
 /**
  * \file            transition_param_example.c
- * \brief           Example showing param and method usage in transitions
+ * \brief           Transition parameter and method hook example
  */
 
 #include "hsm.h"
 #include <stdio.h>
 #include <stdint.h>
 
-/* Custom data structure to pass between states */
+/* Transition data */
 typedef struct {
     uint32_t error_code;
     uint32_t retry_count;
@@ -30,26 +30,21 @@ typedef enum {
 } app_events_t;
 
 /**
- * \brief           Transition hook - called between EXIT and ENTRY
- *                  Used for cleanup, logging, synchronization, etc.
+ * \brief           Transition hook
  */
 static void
 transition_hook(hsm_t* hsm, void* param) {
     transition_data_t* data = (transition_data_t*)param;
-    
-    printf("\n>>> TRANSITION HOOK CALLED <<<\n");
-    
-    if (data != NULL) {
+
+    printf("\n>>> TRANSITION HOOK <<<\n");
+
+    if (data) {
         printf("  Error code: %u\n", data->error_code);
         printf("  Retry count: %u\n", data->retry_count);
         printf("  Message: %s\n", data->message);
-        
-        /* Simulate cleanup operations */
-        printf("  Performing cleanup...\n");
-        printf("  Logging to database...\n");
-        printf("  Syncing state...\n");
+        printf("  Cleanup...\n");
     }
-    
+
     printf(">>> HOOK COMPLETE <<<\n\n");
 }
 
@@ -61,9 +56,9 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("[IDLE] Entry\n");
-            if (data != NULL) {
+            if (data) {
                 transition_data_t* td = (transition_data_t*)data;
-                printf("[IDLE] Received data: %s\n", td->message);
+                printf("[IDLE] Data: %s\n", td->message);
             }
             break;
 
@@ -72,13 +67,8 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_CONNECT: {
-            printf("[IDLE] Connect request\n");
-            transition_data_t td = {
-                .error_code = 0,
-                .retry_count = 0,
-                .message = "Starting connection"
-            };
-            /* Transition with data */
+            printf("[IDLE] Connect\n");
+            transition_data_t td = {0, 0, "Starting connection"};
             hsm_transition(hsm, &state_connecting, &td, NULL);
             return HSM_EVENT_NONE;
         }
@@ -92,14 +82,14 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 static hsm_event_t
 connecting_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     static uint32_t retry_count = 0;
-    
+
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("[CONNECTING] Entry\n");
-            if (data != NULL) {
+            if (data) {
                 transition_data_t* td = (transition_data_t*)data;
                 retry_count = td->retry_count;
-                printf("[CONNECTING] Retry count: %u\n", retry_count);
+                printf("[CONNECTING] Retry: %u\n", retry_count);
             }
             break;
 
@@ -108,38 +98,23 @@ connecting_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_SUCCESS: {
-            printf("[CONNECTING] Connection successful!\n");
-            transition_data_t td = {
-                .error_code = 0,
-                .retry_count = retry_count,
-                .message = "Connected successfully"
-            };
-            /* Transition with data and hook */
+            printf("[CONNECTING] Success!\n");
+            transition_data_t td = {0, retry_count, "Connected"};
             hsm_transition(hsm, &state_connected, &td, transition_hook);
             return HSM_EVENT_NONE;
         }
 
         case EVT_FAIL: {
-            printf("[CONNECTING] Connection failed!\n");
+            printf("[CONNECTING] Failed!\n");
             retry_count++;
-            
+
             if (retry_count < 3) {
-                printf("[CONNECTING] Retrying... (attempt %u)\n", retry_count + 1);
-                transition_data_t td = {
-                    .error_code = 1001,
-                    .retry_count = retry_count,
-                    .message = "Retrying connection"
-                };
-                /* Retry with updated data */
+                printf("[CONNECTING] Retry %u\n", retry_count + 1);
+                transition_data_t td = {1001, retry_count, "Retrying"};
                 hsm_transition(hsm, &state_connecting, &td, NULL);
             } else {
-                printf("[CONNECTING] Max retries exceeded\n");
-                transition_data_t td = {
-                    .error_code = 1002,
-                    .retry_count = retry_count,
-                    .message = "Connection failed after 3 attempts"
-                };
-                /* Go to error state with data and hook */
+                printf("[CONNECTING] Max retries\n");
+                transition_data_t td = {1002, retry_count, "Failed after 3 attempts"};
                 hsm_transition(hsm, &state_error, &td, transition_hook);
             }
             return HSM_EVENT_NONE;
@@ -155,8 +130,8 @@ static hsm_event_t
 connected_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[CONNECTED] Entry - Online!\n");
-            if (data != NULL) {
+            printf("[CONNECTED] Entry\n");
+            if (data) {
                 transition_data_t* td = (transition_data_t*)data;
                 printf("[CONNECTED] Success after %u retries\n", td->retry_count);
             }
@@ -167,12 +142,8 @@ connected_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_DISCONNECT: {
-            printf("[CONNECTED] Disconnecting...\n");
-            transition_data_t td = {
-                .error_code = 0,
-                .retry_count = 0,
-                .message = "User requested disconnect"
-            };
+            printf("[CONNECTED] Disconnect\n");
+            transition_data_t td = {0, 0, "User disconnect"};
             hsm_transition(hsm, &state_idle, &td, transition_hook);
             return HSM_EVENT_NONE;
         }
@@ -187,10 +158,10 @@ static hsm_event_t
 error_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
-            printf("[ERROR] Entry - System Error!\n");
-            if (data != NULL) {
+            printf("[ERROR] Entry\n");
+            if (data) {
                 transition_data_t* td = (transition_data_t*)data;
-                printf("[ERROR] Error code: %u\n", td->error_code);
+                printf("[ERROR] Code: %u\n", td->error_code);
                 printf("[ERROR] Message: %s\n", td->message);
             }
             break;
@@ -200,12 +171,8 @@ error_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_RETRY: {
-            printf("[ERROR] Retrying from scratch...\n");
-            transition_data_t td = {
-                .error_code = 0,
-                .retry_count = 0,
-                .message = "Manual retry initiated"
-            };
+            printf("[ERROR] Retry\n");
+            transition_data_t td = {0, 0, "Manual retry"};
             hsm_transition(hsm, &state_idle, &td, NULL);
             return HSM_EVENT_NONE;
         }
@@ -217,7 +184,7 @@ int
 main(void) {
     hsm_t conn_hsm;
 
-    printf("=== HSM Transition Param & Method Example ===\n\n");
+    printf("=== Transition Param & Method Example ===\n\n");
 
     /* Create states */
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
@@ -225,31 +192,30 @@ main(void) {
     hsm_state_create(&state_connected, "CONNECTED", connected_handler, NULL);
     hsm_state_create(&state_error, "ERROR", error_handler, NULL);
 
-    /* Initialize HSM */
+    /* Init */
     hsm_init(&conn_hsm, "ConnectionHSM", &state_idle, NULL);
 
+    /* Test 1: Success */
     printf("\n--- Test 1: Successful connection ---\n");
     hsm_dispatch(&conn_hsm, EVT_CONNECT, NULL);
     hsm_dispatch(&conn_hsm, EVT_SUCCESS, NULL);
 
+    /* Test 2: Disconnect */
     printf("\n--- Test 2: Disconnect ---\n");
     hsm_dispatch(&conn_hsm, EVT_DISCONNECT, NULL);
 
-    printf("\n--- Test 3: Failed connection with retries ---\n");
+    /* Test 3: Failed with retries */
+    printf("\n--- Test 3: Failed connection ---\n");
     hsm_dispatch(&conn_hsm, EVT_CONNECT, NULL);
-    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);  // Retry 1
-    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);  // Retry 2
-    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);  // Retry 3 -> Error
+    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);
+    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);
+    hsm_dispatch(&conn_hsm, EVT_FAIL, NULL);
 
-    printf("\n--- Test 4: Recover from error ---\n");
+    /* Test 4: Recover */
+    printf("\n--- Test 4: Recover ---\n");
     hsm_dispatch(&conn_hsm, EVT_RETRY, NULL);
 
-    printf("\n=== Example Complete ===\n");
-    printf("\nKey concepts demonstrated:\n");
-    printf("1. Passing data via 'param' to ENTRY/EXIT handlers\n");
-    printf("2. Using 'method' hook for cleanup between EXIT and ENTRY\n");
-    printf("3. Tracking state across transitions (retry_count)\n");
-    printf("4. Conditional transitions based on data\n");
+    printf("\n=== Complete ===\n");
 
     return 0;
 }

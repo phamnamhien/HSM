@@ -7,7 +7,7 @@
 #include "main.h"
 #include <stdio.h>
 
-/* Platform timer for STM32 */
+/* Platform timer */
 typedef struct {
     TIM_HandleTypeDef* htim;
     void (*callback)(void*);
@@ -20,12 +20,10 @@ typedef struct {
 static stm32_timer_t hsm_timers[HSM_CFG_MAX_TIMERS];
 extern TIM_HandleTypeDef htim3;
 
-void
-hsm_timer_irq_handler(void) {
+void hsm_timer_irq_handler(void) {
     for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
-        if (hsm_timers[i].active && hsm_timers[i].callback != NULL) {
+        if (hsm_timers[i].active && hsm_timers[i].callback) {
             hsm_timers[i].callback(hsm_timers[i].arg);
-            
             if (!hsm_timers[i].repeat) {
                 HAL_TIM_Base_Stop_IT(hsm_timers[i].htim);
                 hsm_timers[i].active = 0;
@@ -34,11 +32,8 @@ hsm_timer_irq_handler(void) {
     }
 }
 
-static void*
-stm32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_t repeat) {
-    if (callback == NULL || period_ms < 1) {
-        return NULL;
-    }
+static void* stm32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_t repeat) {
+    if (!callback || period_ms < 1) return NULL;
 
     for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
         if (!hsm_timers[i].active) {
@@ -59,17 +54,15 @@ stm32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_
     return NULL;
 }
 
-static void
-stm32_timer_stop(void* timer_handle) {
+static void stm32_timer_stop(void* timer_handle) {
     stm32_timer_t* timer = (stm32_timer_t*)timer_handle;
-    if (timer != NULL && timer->active) {
+    if (timer && timer->active) {
         HAL_TIM_Base_Stop_IT(timer->htim);
         timer->active = 0;
     }
 }
 
-static uint32_t
-stm32_timer_get_ms(void) {
+static uint32_t stm32_timer_get_ms(void) {
     return HAL_GetTick();
 }
 
@@ -95,8 +88,7 @@ typedef enum {
     EVT_WATCHDOG,
 } app_events_t;
 
-static hsm_event_t
-idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
+static hsm_event_t idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("[IDLE] Entry\n");
@@ -111,23 +103,20 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     return event;
 }
 
-static hsm_event_t
-running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
+static hsm_event_t running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     static uint8_t toggle = 0;
 
     switch (event) {
         case HSM_EVENT_ENTRY:
             printf("[RUNNING] Entry\n");
             toggle = 0;
-            
-            /* LED toggle timer */
-            hsm_timer_create(&timer_led, hsm, EVT_LED_TOGGLE, 
-                           500, HSM_TIMER_PERIODIC);
+
+            /* LED timer */
+            hsm_timer_create(&timer_led, hsm, EVT_LED_TOGGLE, 500, HSM_TIMER_PERIODIC);
             hsm_timer_start(timer_led);
-            
-            /* Watchdog timer */
-            hsm_timer_create(&timer_watchdog, hsm, EVT_WATCHDOG,
-                           10000, HSM_TIMER_ONE_SHOT);
+
+            /* Watchdog */
+            hsm_timer_create(&timer_watchdog, hsm, EVT_WATCHDOG, 10000, HSM_TIMER_ONE_SHOT);
             hsm_timer_start(timer_watchdog);
             break;
 
@@ -139,8 +128,7 @@ running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 
         case EVT_LED_TOGGLE:
             toggle = !toggle;
-            HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, 
-                            toggle ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, toggle ? GPIO_PIN_SET : GPIO_PIN_RESET);
             printf("[RUNNING] LED %s\n", toggle ? "ON" : "OFF");
             break;
 
@@ -157,15 +145,13 @@ running_handler(hsm_t* hsm, hsm_event_t event, void* data) {
     return event;
 }
 
-void
-HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
         hsm_timer_irq_handler();
     }
 }
 
-int
-main(void) {
+int main(void) {
     hsm_t my_hsm;
 
     HAL_Init();
@@ -173,7 +159,7 @@ main(void) {
     MX_GPIO_Init();
     MX_TIM3_Init();
 
-    printf("=== Multiple Timer HSM Example for STM32 ===\n");
+    printf("=== Multiple Timer Example ===\n");
 
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
     hsm_state_create(&state_running, "RUNNING", running_handler, NULL);

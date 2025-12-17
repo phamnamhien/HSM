@@ -11,60 +11,47 @@
 
 static const char* TAG = "HSM_TIMER";
 
-/* Timer interface for ESP32 FreeRTOS */
+/* Timer wrapper */
 typedef struct {
     TimerHandle_t handle;
     void (*callback)(void*);
     void* arg;
 } esp32_timer_t;
 
-static void
-esp32_timer_callback(TimerHandle_t xTimer) {
+static void esp32_timer_callback(TimerHandle_t xTimer) {
     esp32_timer_t* timer = (esp32_timer_t*)pvTimerGetTimerID(xTimer);
-    if (timer != NULL && timer->callback != NULL) {
+    if (timer && timer->callback) {
         timer->callback(timer->arg);
     }
 }
 
-static void*
-esp32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_t repeat) {
+static void* esp32_timer_start(void (*callback)(void*), void* arg, uint32_t period_ms, uint8_t repeat) {
     esp32_timer_t* timer = malloc(sizeof(esp32_timer_t));
-    if (timer == NULL) {
-        return NULL;
-    }
+    if (!timer) return NULL;
 
     timer->callback = callback;
     timer->arg = arg;
-
-    timer->handle = xTimerCreate("hsm_timer", pdMS_TO_TICKS(period_ms), 
+    timer->handle = xTimerCreate("hsm", pdMS_TO_TICKS(period_ms),
                                   repeat ? pdTRUE : pdFALSE, timer, esp32_timer_callback);
 
-    if (timer->handle == NULL) {
+    if (!timer->handle || xTimerStart(timer->handle, 0) != pdPASS) {
+        if (timer->handle) xTimerDelete(timer->handle, 0);
         free(timer);
         return NULL;
     }
-
-    if (xTimerStart(timer->handle, 0) != pdPASS) {
-        xTimerDelete(timer->handle, 0);
-        free(timer);
-        return NULL;
-    }
-
     return timer;
 }
 
-static void
-esp32_timer_stop(void* timer_handle) {
+static void esp32_timer_stop(void* timer_handle) {
     esp32_timer_t* timer = (esp32_timer_t*)timer_handle;
-    if (timer != NULL) {
+    if (timer) {
         xTimerStop(timer->handle, 0);
         xTimerDelete(timer->handle, 0);
         free(timer);
     }
 }
 
-static uint32_t
-esp32_timer_get_ms(void) {
+static uint32_t esp32_timer_get_ms(void) {
     return xTaskGetTickCount() * portTICK_PERIOD_MS;
 }
 
@@ -74,7 +61,7 @@ static const hsm_timer_if_t esp32_timer_if = {
     .get_ms = esp32_timer_get_ms
 };
 
-/* HSM states */
+/* States */
 static hsm_state_t state_idle;
 static hsm_state_t state_active;
 
@@ -109,7 +96,7 @@ idle_handler(hsm_t* hsm, hsm_event_t event, void* data) {
 }
 
 /**
- * \brief           ACTIVE state with multiple timers
+ * \brief           ACTIVE state
  */
 static hsm_event_t
 active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
@@ -119,24 +106,20 @@ active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
         case HSM_EVENT_ENTRY:
             ESP_LOGI(TAG, "[ACTIVE] Entry");
             led_state = 0;
-            
-            /* Create LED blink timer (periodic) */
-            if (hsm_timer_create(&timer_blink, hsm, EVT_BLINK_TICK, 
-                               500, HSM_TIMER_PERIODIC) == HSM_RES_OK) {
-                hsm_timer_start(timer_blink);
-                ESP_LOGI(TAG, "[ACTIVE] Blink timer started");
-            }
-            
-            /* Create auto-off timeout timer (one-shot) */
-            if (hsm_timer_create(&timer_timeout, hsm, EVT_AUTO_TIMEOUT,
-                               5000, HSM_TIMER_ONE_SHOT) == HSM_RES_OK) {
-                hsm_timer_start(timer_timeout);
-                ESP_LOGI(TAG, "[ACTIVE] Auto-off timer started (5s)");
-            }
+
+            /* Blink timer (periodic) */
+            hsm_timer_create(&timer_blink, hsm, EVT_BLINK_TICK, 500, HSM_TIMER_PERIODIC);
+            hsm_timer_start(timer_blink);
+            ESP_LOGI(TAG, "[ACTIVE] Blink timer started");
+
+            /* Auto-off timer (one-shot) */
+            hsm_timer_create(&timer_timeout, hsm, EVT_AUTO_TIMEOUT, 5000, HSM_TIMER_ONE_SHOT);
+            hsm_timer_start(timer_timeout);
+            ESP_LOGI(TAG, "[ACTIVE] Auto-off timer started (5s)");
             break;
 
         case HSM_EVENT_EXIT:
-            ESP_LOGI(TAG, "[ACTIVE] Exit - Cleanup timers");
+            ESP_LOGI(TAG, "[ACTIVE] Exit - Cleanup");
             hsm_timer_delete(timer_blink);
             hsm_timer_delete(timer_timeout);
             break;
@@ -147,7 +130,7 @@ active_handler(hsm_t* hsm, hsm_event_t event, void* data) {
             break;
 
         case EVT_AUTO_TIMEOUT:
-            ESP_LOGI(TAG, "[ACTIVE] Auto-off timeout!");
+            ESP_LOGI(TAG, "[ACTIVE] Auto-off!");
             hsm_transition(hsm, &state_idle, NULL, NULL);
             return HSM_EVENT_NONE;
 
@@ -163,22 +146,22 @@ void
 app_main(void) {
     hsm_t led_hsm;
 
-    ESP_LOGI(TAG, "=== Multiple Timer HSM Example for ESP32 ===");
+    ESP_LOGI(TAG, "=== Multiple Timer Example ===");
 
     /* Create states */
     hsm_state_create(&state_idle, "IDLE", idle_handler, NULL);
     hsm_state_create(&state_active, "ACTIVE", active_handler, NULL);
 
-    /* Initialize HSM */
+    /* Init HSM */
     hsm_init(&led_hsm, "LED_HSM", &state_idle, &esp32_timer_if);
 
     /* Test */
     vTaskDelay(pdMS_TO_TICKS(1000));
-    ESP_LOGI(TAG, "--- Starting device ---");
+    ESP_LOGI(TAG, "--- Starting ---");
     hsm_dispatch(&led_hsm, EVT_START, NULL);
 
-    /* Let it run - will auto-off after 5s */
+    /* Wait for auto-off */
     vTaskDelay(pdMS_TO_TICKS(6000));
 
-    ESP_LOGI(TAG, "=== Example Complete ===");
+    ESP_LOGI(TAG, "=== Complete ===");
 }
