@@ -1,3 +1,8 @@
+
+## 💖 Support This Project
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q5Q1JW4XS)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/phamnamhien)
+
 # HSM - Hierarchical State Machine Library
 
 A lightweight and efficient Hierarchical State Machine (HSM) library for embedded systems written in C.
