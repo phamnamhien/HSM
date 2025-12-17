@@ -31,6 +31,8 @@
  * Author:          Pham Nam Hien
  */
 #include "hsm.h"
+#include <stddef.h>
+
 
 /**
  * \brief           Calculate state depth in hierarchy
