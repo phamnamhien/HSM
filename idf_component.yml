@@ -1,6 +1,6 @@
 version: "1.0.0"
 description: "Lightweight Hierarchical State Machine (HSM) library for embedded systems"
-url: https://github.com/phamnamhien/hsm
+url: https://github.com/phamnamhien/HSM
 dependencies:
   idf: ">=4.4"
 
@@ -27,5 +27,3 @@ maintainers:
 examples:
   - path: examples/basic_example.c
   - path: examples/hierarchical_example.c
-  - path: timer_advanced_example.c
-  - path: timer_example_esp32.c

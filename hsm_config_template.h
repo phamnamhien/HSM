@@ -77,6 +77,19 @@
 #define HSM_CFG_HISTORY 1
 #endif
 
+/**
+ * \brief           Maximum number of timers per HSM instance
+ * 
+ * Each timer consumes approximately 16-20 bytes of RAM.
+ * Set to 0 to disable timer support completely.
+ * 
+ * Range: 0-16
+ * Default: 4
+ */
+#ifndef HSM_CFG_MAX_TIMERS
+#define HSM_CFG_MAX_TIMERS 4
+#endif
+
 #endif /* HSM_CFG_USE_KCONFIG */
 
 #endif /* HSM_CONFIG_HDR_H */

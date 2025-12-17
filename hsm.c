@@ -33,7 +33,6 @@
 #include "hsm.h"
 #include <stddef.h>
 
-
 /**
  * \brief           Calculate state depth in hierarchy
  * \param[in]       state: Pointer to state
@@ -41,9 +40,7 @@
  */
 static uint8_t
 prv_get_state_depth(hsm_state_t* state) {
-    uint8_t depth;
-
-    depth = 0;
+    uint8_t depth = 0;
     while (state != NULL && state->parent != NULL) {
         depth++;
         state = state->parent;
@@ -55,19 +52,23 @@ prv_get_state_depth(hsm_state_t* state) {
  * \brief           Find lowest common ancestor of two states
  * \param[in]       state1: First state
  * \param[in]       state2: Second state
- * \return          Pointer to common ancestor state
+ * \return          Pointer to LCA state
  */
 static hsm_state_t*
 prv_find_lca(hsm_state_t* state1, hsm_state_t* state2) {
-    hsm_state_t *s1, *s2;
     uint8_t depth1, depth2;
+    hsm_state_t *s1, *s2;
+
+    if (state1 == NULL || state2 == NULL) {
+        return NULL;
+    }
 
     s1 = state1;
     s2 = state2;
     depth1 = prv_get_state_depth(s1);
     depth2 = prv_get_state_depth(s2);
 
-    /* Equalize depth */
+    /* Bring both states to same level */
     while (depth1 > depth2) {
         s1 = s1->parent;
         depth1--;
@@ -77,8 +78,8 @@ prv_find_lca(hsm_state_t* state1, hsm_state_t* state2) {
         depth2--;
     }
 
-    /* Find common parent */
-    while (s1 != s2) {
+    /* Find common ancestor */
+    while (s1 != s2 && s1 != NULL && s2 != NULL) {
         s1 = s1->parent;
         s2 = s2->parent;
     }
@@ -90,16 +91,14 @@ prv_find_lca(hsm_state_t* state1, hsm_state_t* state2) {
  * \brief           Execute state handler
  * \param[in]       hsm: Pointer to HSM instance
  * \param[in]       state: State to execute
- * \param[in]       event: Event to handle
+ * \param[in]       event: Event to dispatch
  * \param[in]       data: Event data
- * \return          Event return value
  */
-static hsm_event_t
+static void
 prv_execute_state(hsm_t* hsm, hsm_state_t* state, hsm_event_t event, void* data) {
     if (state != NULL && state->handler != NULL) {
-        return state->handler(hsm, event, data);
+        state->handler(hsm, event, data);
     }
-    return HSM_EVENT_NONE;
 }
 
 /**
@@ -107,26 +106,19 @@ prv_execute_state(hsm_t* hsm, hsm_state_t* state, hsm_event_t event, void* data)
  * \param[in]       state: Pointer to state structure
  * \param[in]       name: State name
  * \param[in]       handler: State handler function
- * \param[in]       parent: Parent state, `NULL` for root state
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \param[in]       parent: Parent state (NULL for root)
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
 hsm_state_create(hsm_state_t* state, const char* name, hsm_state_fn_t handler,
                  hsm_state_t* parent) {
-    uint8_t depth;
-
     if (state == NULL || handler == NULL) {
         return HSM_RES_INVALID_PARAM;
     }
 
-    depth = prv_get_state_depth(parent) + 1;
-    if (depth >= HSM_CFG_MAX_DEPTH) {
-        return HSM_RES_MAX_DEPTH;
-    }
-
+    state->name = name;
     state->handler = handler;
     state->parent = parent;
-    state->name = name;
 
     return HSM_RES_OK;
 }
@@ -136,8 +128,8 @@ hsm_state_create(hsm_state_t* state, const char* name, hsm_state_fn_t handler,
  * \param[in]       hsm: Pointer to HSM instance
  * \param[in]       name: HSM name
  * \param[in]       initial_state: Initial state
- * \param[in]       timer_if: Timer interface (can be NULL if timer not needed)
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \param[in]       timer_if: Timer interface (can be NULL)
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
 hsm_init(hsm_t* hsm, const char* name, hsm_state_t* initial_state,
@@ -152,19 +144,24 @@ hsm_init(hsm_t* hsm, const char* name, hsm_state_t* initial_state,
     hsm->next = NULL;
     hsm->depth = prv_get_state_depth(initial_state);
     hsm->in_transition = 0;
-    hsm->timer_handle = NULL;
-    hsm->timer_event = HSM_EVENT_NONE;
     hsm->timer_if = timer_if;
 
 #if HSM_CFG_HISTORY
     hsm->history = NULL;
 #endif /* HSM_CFG_HISTORY */
 
-    /* Execute entry for initial state hierarchy */
-    hsm->in_transition = 1;
-    for (hsm_state_t* state = initial_state; state != NULL; state = state->parent) {
-        prv_execute_state(hsm, state, HSM_EVENT_ENTRY, NULL);
+#if HSM_CFG_MAX_TIMERS > 0
+    /* Initialize timer pool */
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        hsm->timers[i].state = HSM_TIMER_STATE_IDLE;
+        hsm->timers[i].handle = NULL;
+        hsm->timers[i].hsm = hsm;
     }
+#endif /* HSM_CFG_MAX_TIMERS */
+
+    /* Enter initial state */
+    hsm->in_transition = 1;
+    prv_execute_state(hsm, initial_state, HSM_EVENT_ENTRY, NULL);
     hsm->in_transition = 0;
 
     /* Check if deferred transition was requested in ENTRY */
@@ -178,11 +175,46 @@ hsm_init(hsm_t* hsm, const char* name, hsm_state_t* initial_state,
 }
 
 /**
+ * \brief           Get current state
+ * \param[in]       hsm: Pointer to HSM instance
+ * \return          Pointer to current state
+ */
+hsm_state_t*
+hsm_get_current_state(hsm_t* hsm) {
+    return (hsm != NULL) ? hsm->current : NULL;
+}
+
+/**
+ * \brief           Check if in specific state
+ * \param[in]       hsm: Pointer to HSM instance
+ * \param[in]       state: State to check
+ * \return          1 if in state or parent, 0 otherwise
+ */
+uint8_t
+hsm_is_in_state(hsm_t* hsm, hsm_state_t* state) {
+    hsm_state_t* current;
+
+    if (hsm == NULL || state == NULL) {
+        return 0;
+    }
+
+    current = hsm->current;
+    while (current != NULL) {
+        if (current == state) {
+            return 1;
+        }
+        current = current->parent;
+    }
+
+    return 0;
+}
+
+/**
  * \brief           Dispatch event to current state
  * \param[in]       hsm: Pointer to HSM instance
  * \param[in]       event: Event to dispatch
  * \param[in]       data: Event data
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
 hsm_dispatch(hsm_t* hsm, hsm_event_t event, void* data) {
@@ -196,12 +228,10 @@ hsm_dispatch(hsm_t* hsm, hsm_event_t event, void* data) {
     state = hsm->current;
     evt = event;
 
-    /* Propagate event up the hierarchy until handled */
+    /* Propagate event up the state hierarchy */
     while (state != NULL && evt != HSM_EVENT_NONE) {
-        evt = prv_execute_state(hsm, state, evt, data);
-        if (evt != HSM_EVENT_NONE) {
-            state = state->parent;
-        }
+        evt = state->handler(hsm, evt, data);
+        state = state->parent;
     }
 
     return HSM_RES_OK;
@@ -212,11 +242,12 @@ hsm_dispatch(hsm_t* hsm, hsm_event_t event, void* data) {
  * \param[in]       hsm: Pointer to HSM instance
  * \param[in]       target: Target state
  * \param[in]       param: Optional parameter passed to ENTRY and EXIT events
- * \param[in]       method: Optional function hook called between EXIT and ENTRY events
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \param[in]       method: Optional hook function called between EXIT and ENTRY
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
-hsm_transition(hsm_t* hsm, hsm_state_t* target, void* param, void (*method)(hsm_t* hsm, void* param)) {
+hsm_transition(hsm_t* hsm, hsm_state_t* target, void* param,
+               void (*method)(hsm_t* hsm, void* param)) {
     hsm_state_t* lca;
     hsm_state_t* exit_path[HSM_CFG_MAX_DEPTH];
     hsm_state_t* entry_path[HSM_CFG_MAX_DEPTH];
@@ -237,12 +268,10 @@ hsm_transition(hsm_t* hsm, hsm_state_t* target, void* param, void (*method)(hsm_
     hsm->history = hsm->current;
 #endif /* HSM_CFG_HISTORY */
 
-    /* Stop current state timer if any */
-    if (hsm->timer_handle != NULL && hsm->timer_if != NULL && hsm->timer_if->stop != NULL) {
-        hsm->timer_if->stop(hsm->timer_handle);
-        hsm->timer_handle = NULL;
-        hsm->timer_event = HSM_EVENT_NONE;
-    }
+#if HSM_CFG_MAX_TIMERS > 0
+    /* Stop all running timers (but don't delete them) */
+    hsm_timer_stop_all(hsm);
+#endif /* HSM_CFG_MAX_TIMERS */
 
     /* Find lowest common ancestor */
     lca = prv_find_lca(hsm->current, target);
@@ -292,49 +321,11 @@ hsm_transition(hsm_t* hsm, hsm_state_t* target, void* param, void (*method)(hsm_
     return HSM_RES_OK;
 }
 
-/**
- * \brief           Get current state
- * \param[in]       hsm: Pointer to HSM instance
- * \return          Pointer to current state
- */
-hsm_state_t*
-hsm_get_current_state(hsm_t* hsm) {
-    if (hsm == NULL) {
-        return NULL;
-    }
-    return hsm->current;
-}
-
-/**
- * \brief           Check if HSM is in specific state
- * \param[in]       hsm: Pointer to HSM instance
- * \param[in]       state: State to check
- * \return          `1` if in state or parent state, `0` otherwise
- */
-uint8_t
-hsm_is_in_state(hsm_t* hsm, hsm_state_t* state) {
-    hsm_state_t* current;
-
-    if (hsm == NULL || state == NULL) {
-        return 0;
-    }
-
-    current = hsm->current;
-    while (current != NULL) {
-        if (current == state) {
-            return 1;
-        }
-        current = current->parent;
-    }
-
-    return 0;
-}
-
 #if HSM_CFG_HISTORY
 /**
  * \brief           Transition to history state
  * \param[in]       hsm: Pointer to HSM instance
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
 hsm_transition_history(hsm_t* hsm) {
@@ -350,73 +341,277 @@ hsm_transition_history(hsm_t* hsm) {
 }
 #endif /* HSM_CFG_HISTORY */
 
+/* ========================================================================== */
+/*                            TIMER FUNCTIONS                                 */
+/* ========================================================================== */
+
+#if HSM_CFG_MAX_TIMERS > 0
+
 /**
- * \brief           Timer callback wrapper
- * \param[in]       arg: HSM instance pointer
+ * \brief           Create and configure a timer
+ * \param[out]      timer: Pointer to timer pointer (will be set to allocated timer)
+ * \param[in]       hsm: Pointer to HSM instance
+ * \param[in]       event: Event to dispatch when timer expires
+ * \param[in]       period_ms: Timer period in milliseconds
+ * \param[in]       mode: Timer mode
+ * \return          \ref HSM_RES_OK on success
  */
-static void
-prv_timer_callback(void* arg) {
-    hsm_t* hsm = (hsm_t*)arg;
-    if (hsm != NULL && hsm->timer_event != HSM_EVENT_NONE) {
-        hsm_dispatch(hsm, hsm->timer_event, NULL);
+hsm_result_t
+hsm_timer_create(hsm_timer_t** timer, hsm_t* hsm, hsm_event_t event,
+                 uint32_t period_ms, hsm_timer_mode_t mode) {
+    if (timer == NULL || hsm == NULL || period_ms < 1) {
+        return HSM_RES_INVALID_PARAM;
     }
+
+    /* Find free timer slot */
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        if (hsm->timers[i].state == HSM_TIMER_STATE_IDLE) {
+            hsm->timers[i].hsm = hsm;
+            hsm->timers[i].event = event;
+            hsm->timers[i].period_ms = period_ms;
+            hsm->timers[i].mode = mode;
+            hsm->timers[i].state = HSM_TIMER_STATE_STOPPED;
+            hsm->timers[i].handle = NULL;
+            
+            *timer = &hsm->timers[i];
+            return HSM_RES_OK;
+        }
+    }
+
+    return HSM_RES_NO_TIMER; /* No free timer slot */
 }
 
 /**
- * \brief           Start timer for current state
- * \param[in]       hsm: Pointer to HSM instance
- * \param[in]       event: Event to dispatch when timer expires
- * \param[in]       period_ms: Timer period in milliseconds (min 1ms)
- * \param[in]       mode: Timer mode (one-shot or periodic)
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \brief           Start a timer
+ * \param[in]       timer: Pointer to timer structure
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
-hsm_timer_start(hsm_t* hsm, hsm_event_t event, uint32_t period_ms, hsm_timer_mode_t mode) {
-    if (hsm == NULL || hsm->timer_if == NULL || hsm->timer_if->start == NULL) {
+hsm_timer_start(hsm_timer_t* timer) {
+    if (timer == NULL || timer->state == HSM_TIMER_STATE_IDLE) {
         return HSM_RES_INVALID_PARAM;
     }
 
-    if (period_ms < 1 || event == HSM_EVENT_NONE) {
-        return HSM_RES_INVALID_PARAM;
-    }
-
-    /* Stop existing timer if any */
-    if (hsm->timer_handle != NULL && hsm->timer_if->stop != NULL) {
-        hsm->timer_if->stop(hsm->timer_handle);
-        hsm->timer_handle = NULL;
-    }
-
-    /* Save timer event */
-    hsm->timer_event = event;
-
-    /* Start new timer */
-    hsm->timer_handle =
-        hsm->timer_if->start(prv_timer_callback, hsm, period_ms, (mode == HSM_TIMER_PERIODIC) ? 1 : 0);
-
-    if (hsm->timer_handle == NULL) {
-        hsm->timer_event = HSM_EVENT_NONE;
+    hsm_t* hsm = timer->hsm;
+    if (hsm->timer_if == NULL || hsm->timer_if->start == NULL) {
         return HSM_RES_ERROR;
+    }
+
+    /* Stop if already running */
+    if (timer->state == HSM_TIMER_STATE_RUNNING && timer->handle != NULL) {
+        hsm->timer_if->stop(timer->handle);
+    }
+
+    /* Start platform timer */
+    uint8_t repeat = (timer->mode == HSM_TIMER_PERIODIC) ? 1 : 0;
+    timer->handle = hsm->timer_if->start(
+        (void (*)(void*))hsm_timer_callback,
+        timer,
+        timer->period_ms,
+        repeat
+    );
+
+    if (timer->handle == NULL) {
+        return HSM_RES_ERROR;
+    }
+
+    timer->state = HSM_TIMER_STATE_RUNNING;
+    return HSM_RES_OK;
+}
+
+/**
+ * \brief           Stop a timer
+ * \param[in]       timer: Pointer to timer structure
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_stop(hsm_timer_t* timer) {
+    if (timer == NULL || timer->state != HSM_TIMER_STATE_RUNNING) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    hsm_t* hsm = timer->hsm;
+    if (hsm->timer_if != NULL && hsm->timer_if->stop != NULL && timer->handle != NULL) {
+        hsm->timer_if->stop(timer->handle);
+        timer->handle = NULL;
+    }
+
+    timer->state = HSM_TIMER_STATE_STOPPED;
+    return HSM_RES_OK;
+}
+
+/**
+ * \brief           Restart a timer
+ * \param[in]       timer: Pointer to timer structure
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_restart(hsm_timer_t* timer) {
+    if (timer == NULL || timer->state == HSM_TIMER_STATE_IDLE) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    /* Stop if running */
+    if (timer->state == HSM_TIMER_STATE_RUNNING) {
+        hsm_timer_stop(timer);
+    }
+
+    /* Start again */
+    return hsm_timer_start(timer);
+}
+
+/**
+ * \brief           Delete a timer
+ * \param[in]       timer: Pointer to timer structure
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_delete(hsm_timer_t* timer) {
+    if (timer == NULL) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    /* Stop if running */
+    if (timer->state == HSM_TIMER_STATE_RUNNING) {
+        hsm_timer_stop(timer);
+    }
+
+    /* Mark as idle */
+    timer->state = HSM_TIMER_STATE_IDLE;
+    timer->handle = NULL;
+    timer->hsm = NULL;
+
+    return HSM_RES_OK;
+}
+
+/**
+ * \brief           Set timer period
+ * \param[in]       timer: Pointer to timer structure
+ * \param[in]       period_ms: New period in milliseconds
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_set_period(hsm_timer_t* timer, uint32_t period_ms) {
+    if (timer == NULL || timer->state == HSM_TIMER_STATE_IDLE || period_ms < 1) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    timer->period_ms = period_ms;
+
+    /* Restart if currently running */
+    if (timer->state == HSM_TIMER_STATE_RUNNING) {
+        return hsm_timer_restart(timer);
     }
 
     return HSM_RES_OK;
 }
 
 /**
- * \brief           Stop timer for current state
- * \param[in]       hsm: Pointer to HSM instance
- * \return          \ref HSM_RES_OK on success, member of \ref hsm_result_t otherwise
+ * \brief           Set timer event
+ * \param[in]       timer: Pointer to timer structure
+ * \param[in]       event: New event
+ * \return          \ref HSM_RES_OK on success
  */
 hsm_result_t
-hsm_timer_stop(hsm_t* hsm) {
+hsm_timer_set_event(hsm_timer_t* timer, hsm_event_t event) {
+    if (timer == NULL || timer->state == HSM_TIMER_STATE_IDLE) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    timer->event = event;
+    return HSM_RES_OK;
+}
+
+/**
+ * \brief           Check if timer is running
+ * \param[in]       timer: Pointer to timer structure
+ * \return          1 if running, 0 otherwise
+ */
+uint8_t
+hsm_timer_is_running(hsm_timer_t* timer) {
+    if (timer == NULL) {
+        return 0;
+    }
+    return (timer->state == HSM_TIMER_STATE_RUNNING) ? 1 : 0;
+}
+
+/**
+ * \brief           Get timer state
+ * \param[in]       timer: Pointer to timer structure
+ * \return          Timer state
+ */
+hsm_timer_state_t
+hsm_timer_get_state(hsm_timer_t* timer) {
+    if (timer == NULL) {
+        return HSM_TIMER_STATE_IDLE;
+    }
+    return timer->state;
+}
+
+/**
+ * \brief           Stop all timers
+ * \param[in]       hsm: Pointer to HSM instance
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_stop_all(hsm_t* hsm) {
     if (hsm == NULL) {
         return HSM_RES_INVALID_PARAM;
     }
 
-    if (hsm->timer_handle != NULL && hsm->timer_if != NULL && hsm->timer_if->stop != NULL) {
-        hsm->timer_if->stop(hsm->timer_handle);
-        hsm->timer_handle = NULL;
-        hsm->timer_event = HSM_EVENT_NONE;
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        if (hsm->timers[i].state == HSM_TIMER_STATE_RUNNING) {
+            hsm_timer_stop(&hsm->timers[i]);
+        }
     }
 
     return HSM_RES_OK;
 }
+
+/**
+ * \brief           Delete all timers
+ * \param[in]       hsm: Pointer to HSM instance
+ * \return          \ref HSM_RES_OK on success
+ */
+hsm_result_t
+hsm_timer_delete_all(hsm_t* hsm) {
+    if (hsm == NULL) {
+        return HSM_RES_INVALID_PARAM;
+    }
+
+    for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+        if (hsm->timers[i].state != HSM_TIMER_STATE_IDLE) {
+            hsm_timer_delete(&hsm->timers[i]);
+        }
+    }
+
+    return HSM_RES_OK;
+}
+
+/**
+ * \brief           Timer callback - called from platform timer
+ * \param[in]       timer: Pointer to timer structure
+ */
+void
+hsm_timer_callback(hsm_timer_t* timer) {
+    if (timer == NULL || timer->state != HSM_TIMER_STATE_RUNNING) {
+        return;
+    }
+
+    hsm_t* hsm = timer->hsm;
+    if (hsm == NULL) {
+        return;
+    }
+
+    /* For one-shot timers, stop after firing */
+    if (timer->mode == HSM_TIMER_ONE_SHOT) {
+        timer->state = HSM_TIMER_STATE_STOPPED;
+        /* Handle is stopped by platform, just clear it */
+        timer->handle = NULL;
+    }
+
+    /* Dispatch timer event */
+    hsm_dispatch(hsm, timer->event, NULL);
+}
+
+#endif /* HSM_CFG_MAX_TIMERS */
