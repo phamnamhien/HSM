@@ -22,8 +22,7 @@ tags:
 
 license: MIT
 maintainers:
-  - name: "Pham Nam Hien"
-    email: "phamnamhien@gmail.com"
+  - "Pham Nam Hien <phamnamhien@gmail.com>"
 
 examples:
   - path: examples/basic_example.c
