@@ -13,6 +13,7 @@ typedef struct {
     void (*callback)(void*);
     void* arg;
     uint32_t period_ms;
+    uint32_t counter;
     uint8_t repeat;
     uint8_t active;
 } stm32_timer_t;
@@ -20,13 +21,25 @@ typedef struct {
 static stm32_timer_t hsm_timers[HSM_CFG_MAX_TIMERS];
 extern TIM_HandleTypeDef htim3;
 
+/**
+ * \brief           Timer IRQ handler - call this from HAL_TIM_PeriodElapsedCallback
+ *                  TIM3 must be configured for 1ms period (Prescaler = APB_CLK/1MHz - 1, ARR = 999)
+ */
 void hsm_timer_irq_handler(void) {
     for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
-        if (hsm_timers[i].active && hsm_timers[i].callback) {
-            hsm_timers[i].callback(hsm_timers[i].arg);
-            if (!hsm_timers[i].repeat) {
-                HAL_TIM_Base_Stop_IT(hsm_timers[i].htim);
-                hsm_timers[i].active = 0;
+        if (hsm_timers[i].active) {
+            hsm_timers[i].counter++;  // Count every 1ms
+            
+            if (hsm_timers[i].counter >= hsm_timers[i].period_ms) {
+                hsm_timers[i].counter = 0;
+                
+                if (hsm_timers[i].callback) {
+                    hsm_timers[i].callback(hsm_timers[i].arg);
+                }
+                
+                if (!hsm_timers[i].repeat) {
+                    hsm_timers[i].active = 0;
+                }
             }
         }
     }
@@ -41,12 +54,14 @@ static void* stm32_timer_start(void (*callback)(void*), void* arg, uint32_t peri
             hsm_timers[i].callback = callback;
             hsm_timers[i].arg = arg;
             hsm_timers[i].period_ms = period_ms;
+            hsm_timers[i].counter = 0;
             hsm_timers[i].repeat = repeat;
             hsm_timers[i].active = 1;
 
-            __HAL_TIM_SET_AUTORELOAD(hsm_timers[i].htim, period_ms - 1);
-            __HAL_TIM_SET_COUNTER(hsm_timers[i].htim, 0);
-            HAL_TIM_Base_Start_IT(hsm_timers[i].htim);
+            // Start TIM3 if not running
+            if (HAL_TIM_Base_GetState(&htim3) != HAL_TIM_STATE_BUSY) {
+                HAL_TIM_Base_Start_IT(&htim3);
+            }
 
             return &hsm_timers[i];
         }
@@ -57,8 +72,19 @@ static void* stm32_timer_start(void (*callback)(void*), void* arg, uint32_t peri
 static void stm32_timer_stop(void* timer_handle) {
     stm32_timer_t* timer = (stm32_timer_t*)timer_handle;
     if (timer && timer->active) {
-        HAL_TIM_Base_Stop_IT(timer->htim);
         timer->active = 0;
+        
+        // Stop TIM3 if no active timers
+        uint8_t has_active = 0;
+        for (uint8_t i = 0; i < HSM_CFG_MAX_TIMERS; i++) {
+            if (hsm_timers[i].active) {
+                has_active = 1;
+                break;
+            }
+        }
+        if (!has_active) {
+            HAL_TIM_Base_Stop_IT(&htim3);
+        }
     }
 }
 
