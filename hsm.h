@@ -29,6 +29,7 @@
  * This file is part of HSM library.
  *
  * Author:          Pham Nam Hien
+ * Version:         1.0.1
  */
 #ifndef HSM_HDR_H
 #define HSM_HDR_H
@@ -216,7 +217,7 @@ uint8_t hsm_is_in_state(hsm_t* hsm, hsm_state_t* state);
 hsm_result_t hsm_transition_history(hsm_t* hsm);
 #endif /* HSM_CFG_HISTORY */
 
-/* Timer functions - NEW API */
+/* Timer functions */
 #if HSM_CFG_MAX_TIMERS > 0
 
 /**
@@ -230,7 +231,7 @@ hsm_result_t hsm_transition_history(hsm_t* hsm);
  */
 hsm_result_t hsm_timer_create(hsm_timer_t** timer, hsm_t* hsm, hsm_event_t event,
                                uint32_t period_ms, hsm_timer_mode_t mode);
-
+                               
 /**
  * \brief           Start a configured timer
  * \param[in]       timer: Pointer to timer structure

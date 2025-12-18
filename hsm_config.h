@@ -1,6 +1,7 @@
 /**
  * \file            hsm_config.h
- * \brief           HSM library configuration template
+ * \brief           HSM library configuration
+ * \version         1.0.1
  */
 
 /*

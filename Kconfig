@@ -6,14 +6,18 @@ menu "HSM Configuration"
         range 2 16
         help
             Maximum number of nested state levels supported.
-            Higher values use more stack memory during transitions.
 
     config HSM_HISTORY
         bool "Enable state history feature"
         default y
         help
-            Enable the state history mechanism which allows
-            transitioning back to the previous state.
-            Adds 4 bytes to HSM instance size.
+            Enable the state history mechanism.
+
+    config HSM_MAX_TIMERS
+        int "Maximum timers per HSM instance"
+        default 4
+        range 0 16
+        help
+            Maximum number of concurrent timers.
 
 endmenu
