@@ -269,8 +269,8 @@ hsm_transition(hsm_t* hsm, hsm_state_t* target, void* param,
 #endif /* HSM_CFG_HISTORY */
 
 #if HSM_CFG_MAX_TIMERS > 0
-    /* Stop all running timers (but don't delete them) */
-    hsm_timer_stop_all(hsm);
+    /* Delete all timers to prevent race condition */
+    hsm_timer_delete_all(hsm);
 #endif /* HSM_CFG_MAX_TIMERS */
 
     /* Find lowest common ancestor */
