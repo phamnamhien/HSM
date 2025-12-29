@@ -193,7 +193,7 @@ main(void) {
     hsm_state_create(&state_error, "ERROR", error_handler, NULL);
 
     /* Init */
-    hsm_init(&conn_hsm, "ConnectionHSM", &state_idle, NULL);
+    hsm_init(&conn_hsm, "ConnectionHSM", &state_idle);
 
     /* Test 1: Success */
     printf("\n--- Test 1: Successful connection ---\n");

@@ -1,5 +1,5 @@
-version: "1.0.1"
-description: "Lightweight Hierarchical State Machine (HSM) library for embedded systems - v1.0.1 fixes critical timer race condition"
+version: "2.0.0"
+description: "Lightweight Hierarchical State Machine (HSM) library for embedded systems - Pure state machine without timers"
 url: https://github.com/phamnamhien/HSM
 dependencies:
   idf: ">=4.4"
@@ -18,8 +18,6 @@ tags:
   - hsm
   - fsm
   - embedded
-  - rtos
-  - thread-safe
 
 license: MIT
 maintainers:
@@ -28,5 +26,4 @@ maintainers:
 examples:
   - path: examples/basic_example.c
   - path: examples/hierarchical_example.c
-  - path: examples/timer_example_esp32.c
-  - path: examples/timer_advanced_example.c
+  - path: examples/transition_param_example.c

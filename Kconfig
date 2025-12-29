@@ -13,11 +13,4 @@ menu "HSM Configuration"
         help
             Enable the state history mechanism.
 
-    config HSM_MAX_TIMERS
-        int "Maximum timers per HSM instance"
-        default 4
-        range 0 16
-        help
-            Maximum number of concurrent timers.
-
 endmenu

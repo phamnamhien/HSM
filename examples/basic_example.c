@@ -105,7 +105,7 @@ app_main(void) {
     hsm_state_create(&state_error, "ERROR", error_handler, NULL);
 
     /* Init HSM */
-    hsm_init(&my_hsm, "BasicHSM", &state_idle, NULL);
+    hsm_init(&my_hsm, "BasicHSM", &state_idle);
 
     /* Test */
     printf("--- Test 1: IDLE -> RUNNING ---\n");

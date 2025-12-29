@@ -1,0 +1,22 @@
+# Build files
+build/
+*.o
+*.a
+*.so
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# OS
+.DS_Store
+Thumbs.db

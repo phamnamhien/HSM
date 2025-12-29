@@ -162,7 +162,7 @@ app_main(void) {
     hsm_state_create(&state_standby, "STANDBY", standby_handler, &state_system);
 
     /* Init */
-    hsm_init(&my_hsm, "HierarchicalHSM", &state_mode1, NULL);
+    hsm_init(&my_hsm, "HierarchicalHSM", &state_mode1);
 
     /* Test */
     printf("\n--- Test 1: Button in MODE1 ---\n");
@@ -196,4 +196,3 @@ app_main(void) {
 
     printf("\n=== Complete ===\n");
 }
-
